@@ -1,0 +1,28 @@
+aws:
+  region: "eu-north-1"
+  bucket_name: "sot-01-ev-location"
+
+s3:
+  raw_prefix: "raw-data/"
+  silver_prefix: "silver/"
+  gold_prefix: "gold/"
+
+project:
+  name: "EV Location Intelligence"
+  country: "Spain"
+
+data_sources:
+  ine:
+    enabled: true
+  dgt:
+    enabled: true
+  dgt_nap:
+    enabled: true
+  cnig:
+    enabled: true
+
+processing:
+  output_format: "parquet"
+
+streamlit:
+  title: "EV Location Intelligence"

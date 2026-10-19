@@ -1,0 +1,92 @@
+# ==============================
+# Python
+# ==============================
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyd
+*.so
+
+# ==============================
+# Entornos virtuales
+# ==============================
+.venv/
+venv/
+env/
+ENV/
+
+# ==============================
+# Variables de entorno / secretos
+# ==============================
+.env
+.env.*
+!.env.example
+
+# ==============================
+# AWS / SSH / credenciales
+# ==============================
+*.pem
+*.ppk
+*.key
+.aws/
+credentials
+
+# ==============================
+# IDEs
+# ==============================
+.vscode/
+.idea/
+
+# ==============================
+# Jupyter
+# ==============================
+.ipynb_checkpoints/
+
+# ==============================
+# Testing / coverage
+# ==============================
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ==============================
+# Logs
+# ==============================
+*.log
+logs/
+
+# ==============================
+# Archivos temporales
+# ==============================
+*.tmp
+*.temp
+*.swp
+*.bak
+
+# ==============================
+# Sistema operativo
+# ==============================
+.DS_Store
+Thumbs.db
+
+# ==============================
+# Datos locales
+# Los datos reales estarán en S3
+# ==============================
+data/
+datasets/
+
+*.parquet
+*.csv
+
+# ==============================
+# Modelos / artefactos generados
+# ==============================
+models/
+outputs/
+artifacts/
+
+# ==============================
+# Streamlit - secretos
+# ==============================
+.streamlit/secrets.toml

@@ -1,0 +1,40 @@
+# AWS
+boto3
+botocore
+s3fs
+
+# Data processing
+pandas
+numpy
+pyarrow
+openpyxl
+
+# APIs / descarga de datos
+requests
+
+# Configuracion
+PyYAML
+python-dotenv
+
+# XML
+lxml
+
+# Geospatial
+geopandas
+shapely
+pyproj
+pyogrio
+
+# Data Science / Scoring / Clustering
+scikit-learn
+scipy
+
+# Visualizacion
+matplotlib
+plotly
+
+# Dashboard
+streamlit
+
+# Testing
+pytest
