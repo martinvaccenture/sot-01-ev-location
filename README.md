@@ -1,38 +1,65 @@
 # EV Location Intelligence
 
-## 1. Descripción y objetivo
+## 1. Problema y decisión
 
-**EV Location Intelligence** es un proyecto de análisis de datos orientado a identificar y priorizar municipios españoles con mayor potencial para la instalación de hubs de recarga rápida de vehículos eléctricos.
+**EV Location Intelligence** busca apoyar la decisión de **en qué municipios españoles priorizar la instalación de nuevos hubs de recarga rápida para vehículos eléctricos**.
 
-El proyecto integra diferentes fuentes de datos públicas para construir un dataset municipal consolidado, generar un sistema de **scoring**, aplicar técnicas de **Machine Learning** y visualizar los resultados mediante una aplicación desarrollada con **Streamlit**.
+La decisión se apoya en datos demográficos, parque de vehículos, infraestructura de recarga existente e información geográfica, con el objetivo de identificar y ordenar municipios según su potencial.
 
-### Objetivos
-
-- Integrar información municipal procedente de diferentes fuentes.
-- Construir un pipeline de datos basado en las capas **Raw → Silver → Gold**.
-- Generar indicadores relevantes para evaluar los municipios.
-- Diseñar un sistema de scoring para priorizar posibles ubicaciones.
-- Aplicar **K-Means** para identificar grupos de municipios con características similares.
-- Visualizar y comunicar los resultados mediante Streamlit.
+El resultado del proyecto será una priorización de municipios que permita apoyar una decisión de localización basada en datos.
 
 ---
 
-## 2. Fuentes de datos
+## 2. Hipótesis
 
-| Fuente | Información |
-|---|---|
-| **INE** | Información demográfica y municipal |
-| **DGT** | Parque de vehículos e información relacionada con vehículos eléctricos |
-| **DGT NAP** | Infraestructura y puntos de recarga, incluyendo puntos de potencia ≥ 50 kW |
-| **CNIG** | Información geográfica y territorial |
+Antes de realizar el análisis se plantean las siguientes hipótesis:
 
-La integración de las diferentes fuentes se realizará mediante identificadores territoriales comunes, principalmente el **código INE municipal**.
+- Los municipios con mayor población presentan una mayor demanda potencial.
+- Una mayor presencia de vehículos, especialmente eléctricos, incrementa la necesidad potencial de infraestructura de recarga.
+- La infraestructura de recarga ya existente debe considerarse para identificar tanto cobertura como posibles carencias.
+- La disponibilidad de puntos de recarga rápida, especialmente de potencia ≥ 50 kW, puede ayudar a caracterizar el nivel actual de infraestructura.
+- La combinación de diferentes variables puede ofrecer una priorización más útil que analizar cada indicador de forma independiente.
+- Municipios con características similares pueden agruparse para identificar diferentes tipologías de oportunidad.
+
+Estas hipótesis serán contrastadas mediante el scoring y el análisis de clustering.
 
 ---
 
-## 3. Arquitectura y pipeline
+## 3. Fuentes
 
-El proyecto sigue una arquitectura de procesamiento organizada en tres capas:
+| Fuente | Información utilizada | Fecha descarga | Licencia |
+|---|---|---|---|
+| INE | Información demográfica y municipal | TODO | TODO |
+| DGT | Parque de vehículos e información relacionada con vehículos eléctricos | TODO | TODO |
+| DGT NAP | Infraestructura y puntos de recarga | TODO | TODO |
+| CNIG | Información geográfica y territorial | TODO | TODO |
+
+La integración de las fuentes se realizará utilizando identificadores territoriales comunes, principalmente el **código INE municipal**.
+
+---
+
+## 4. Calidad de datos
+
+El pipeline incorpora controles de calidad durante las transformaciones Raw → Silver → Gold.
+
+Se comprobarán, entre otros:
+
+- Valores nulos.
+- Registros duplicados.
+- Tipos y formatos.
+- Homogeneidad de códigos municipales.
+- Cobertura de municipios entre fuentes.
+- Coherencia de las variables utilizadas en el análisis.
+- Coordenadas y datos geográficos.
+- Calidad del dataset final utilizado para scoring y clustering.
+
+Los resultados concretos de estos controles se documentarán en la **tabla de calidad definida en el apartado 7.4**.
+
+---
+
+## 5. Solución y resultados
+
+La solución utiliza un pipeline de datos basado en tres capas:
 
 ```text
 INE / DGT / DGT NAP / CNIG
@@ -60,117 +87,80 @@ INE / DGT / DGT NAP / CNIG
  Scoring / ML  Streamlit
 ```
 
-### Raw
+- **Raw:** datos originales obtenidos de las fuentes.
+- **Silver:** limpieza, tipado, homogeneización, integración y tratamiento geoespacial.
+- **Gold:** controles finales de calidad, variables derivadas, normalización y dataset analítico.
 
-Contiene los datos originales obtenidos desde las distintas fuentes, conservando la información antes de realizar transformaciones.
+El análisis combinará:
 
-### Silver
+1. **Baseline:** TODO - definir método de referencia.
+2. **Scoring:** normalización, ponderación y ranking de municipios.
+3. **K-Means:** segmentación de municipios con características similares.
+4. **Streamlit:** visualización mediante mapa, KPIs, ranking, filtros y resultados.
 
-Contiene los datos limpios y transformados. En esta capa se realizan procesos como:
+### Resultados
 
-- Tipado y estandarización.
-- Tratamiento de valores nulos.
-- Eliminación de duplicados.
-- Homogeneización de códigos municipales.
-- Integración entre fuentes.
-- Tratamiento geoespacial.
+TODO: completar con los resultados reales:
 
-### Gold
-
-Contiene los datos preparados para su consumo analítico:
-
-- Controles de calidad.
-- Creación de variables derivadas.
-- Normalización.
-- Generación de indicadores.
-- Preparación del scoring.
-- Preparación de variables para Machine Learning.
-
-El pipeline completo es coordinado por `orchestrator.py`, encargado de ejecutar secuencialmente las distintas fases.
+- Municipios con mayor score.
+- Comparación con el baseline.
+- Clusters identificados.
+- Principales patrones encontrados.
+- Visualizaciones relevantes.
 
 ---
 
-## 4. Scoring y Machine Learning
+## 6. Valor de negocio
 
-A partir del dataset Gold se desarrollará un sistema de scoring para establecer un ranking de municipios:
+El proyecto busca transformar diferentes fuentes públicas en una herramienta que facilite la **priorización de ubicaciones para infraestructura de recarga rápida**.
 
-```text
-Variables
-   │
-   ▼
-Normalización
-   │
-   ▼
-Pesos
-   │
-   ▼
-Score final
-   │
-   ▼
-Ranking de municipios
-```
+La recomendación final deberá indicar:
 
-Además, se utilizará **K-Means** para identificar grupos de municipios con características similares y comparar los resultados del clustering con la priorización obtenida mediante scoring.
+- Qué municipios deberían priorizarse.
+- Por qué presentan mayor potencial.
+- Qué variables explican su posición.
+- Qué diferencias existen respecto al baseline.
+- Qué impacto tendría seguir la recomendación.
 
-**Pendiente de definir durante el desarrollo:**
-
-- Variables definitivas.
-- Método de normalización.
-- Pesos utilizados.
-- Análisis de sensibilidad.
-- Número óptimo de clusters.
-- Interpretación de los resultados.
+**TODO:** incorporar la recomendación final, el impacto cuantificado y los supuestos definidos en el apartado 7.4 una vez obtenidos los resultados.
 
 ---
 
-## 5. Estructura del repositorio
+## 7. Limitaciones
+
+Las principales limitaciones a evaluar son:
+
+- Diferentes fechas de actualización entre fuentes.
+- Posibles diferencias de cobertura y granularidad.
+- Municipios o variables sin información completa.
+- Dependencia del scoring respecto a variables, normalización y pesos seleccionados.
+- Dependencia de K-Means respecto a las variables y número de clusters utilizados.
+- Variables potencialmente relevantes no disponibles en las fuentes actuales.
+
+Como siguientes pasos se podrá evaluar la incorporación de nuevas fuentes, variables de movilidad y tráfico, variables socioeconómicas y actualizaciones automáticas del pipeline.
+
+---
+
+## 8. Ejecución y uso de IA
+
+### Estructura
 
 ```text
 sot-01-ev-location/
-│
 ├── app/
 │   └── streamlit_app.py
-│
 ├── config/
 │   └── config.yaml
-│
 ├── src/
 │   ├── gold.py
 │   ├── ingestion.py
 │   ├── orchestrator.py
 │   └── silver.py
-│
 ├── tests/
-│
 ├── .gitignore
 ├── README.md
 └── requirements.txt
 ```
-
-### Componentes principales
-
-- **`src/ingestion.py`**: obtiene los datos de las distintas fuentes y los almacena en la capa Raw de Amazon S3.
-- **`src/silver.py`**: realiza la limpieza, transformación, estandarización e integración de los datos.
-- **`src/gold.py`**: prepara el dataset analítico final, realiza controles de calidad y genera las variables necesarias para scoring y Machine Learning.
-- **`src/orchestrator.py`**: punto de entrada del pipeline. Ejecuta secuencialmente las fases de ingestión, Silver y Gold.
-- **`app/streamlit_app.py`**: aplicación interactiva para visualizar los resultados finales.
-- **`config/config.yaml`**: centraliza la configuración utilizada por los diferentes componentes.
-- **`tests/`**: contiene las pruebas del pipeline y sus transformaciones.
-- **`requirements.txt`**: contiene las dependencias Python necesarias para ejecutar el proyecto.
-- **`.gitignore`**: excluye del repositorio credenciales, entornos virtuales, claves SSH, datasets locales y otros archivos que no deben versionarse.
-
----
-
-## 6. Infraestructura y ejecución
-
-El proyecto utiliza:
-
-- **Amazon S3** para almacenar las capas Raw, Silver y Gold.
-- **Amazon EC2** como entorno de ejecución.
-- **AWS IAM** para gestionar los permisos entre EC2 y S3.
-- **GitHub Enterprise** para control de versiones y colaboración.
-
-El desarrollo se realiza en local utilizando ramas independientes. Una vez integrados los cambios en `main`, el repositorio se actualiza en EC2 para ejecutar el pipeline sobre AWS.
 
 ### Instalación
 
@@ -186,73 +176,28 @@ pip install -r requirements.txt
 
 ### Ejecución del pipeline
 
-Desde la raíz del repositorio:
-
 ```bash
 python3 src/orchestrator.py
 ```
 
-El orquestador ejecuta:
+`orchestrator.py` ejecuta secuencialmente:
 
 ```text
-orchestrator.py
-      │
-      ├──► ingestion → S3 / Raw
-      │
-      ├──► silver    → S3 / Silver
-      │
-      └──► gold      → S3 / Gold
+ingestion → Raw
+silver    → Silver
+gold      → Gold
 ```
 
-La instancia EC2 utiliza un **IAM Role** para acceder a los recursos necesarios de AWS sin almacenar credenciales directamente en el código.
+La ejecución en Amazon EC2 utiliza el IAM Role asociado a la instancia para acceder a Amazon S3.
 
-### Ejecución del dashboard
+### Ejecución de Streamlit
 
 ```bash
 streamlit run app/streamlit_app.py
 ```
 
----
+### Uso de IA generativa
 
-## 7. Flujo de desarrollo
+Durante el desarrollo se ha utilizado IA generativa como herramienta de apoyo.
 
-El desarrollo se organiza mediante ramas independientes por funcionalidad:
-
-```text
-feature/ingestion
-feature/silver
-feature/gold
-feature/scoring
-feature/streamlit
-feature/orchestrator
-        │
-        ▼
-   Pull Request
-        │
-        ▼
-       main
-        │
-        ▼
-       EC2
-```
-
-Cada funcionalidad se desarrolla de forma independiente para permitir el trabajo en paralelo.
-
-Una vez finalizada y validada una funcionalidad, se crea una **Pull Request** hacia `main`. La versión integrada en `main` será la utilizada para ejecutar el proyecto en EC2.
-
----
-
-## 8. Resultados
-
-> Esta sección se completará una vez finalizado el procesamiento y análisis de los datos.
-
-Los resultados finales incluirán:
-
-- Ranking de municipios.
-- Municipios prioritarios para nuevos hubs de recarga.
-- Scores obtenidos.
-- Clusters identificados.
-- Principales indicadores.
-- Visualizaciones del dashboard.
-- Comparación entre scoring y clustering.
-- Conclusiones y recomendación final.
+TODO: completar la declaración final indicando las herramientas utilizadas y las actividades concretas en las que se emplearon, de acuerdo con los requisitos de la entrega.
