@@ -1,12 +1,3 @@
-aws:
-  region: "eu-north-1"
-  bucket_name: "sot-01-ev-location"
-
-s3:
-  raw_prefix: "raw-data/"
-  silver_prefix: "silver/"
-  gold_prefix: "gold/"
-
 project:
   name: "EV Location Intelligence"
   country: "Spain"
