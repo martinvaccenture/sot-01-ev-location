@@ -3,6 +3,7 @@
 Cada función lee lo que necesita de data/raw/, construye su tabla, la guarda en
 data/processed/ (Parquet) y la devuelve. No reciben argumentos ni ejecutan nada
 al importarse. Requiere haber ejecutado antes la ingesta (ingestion_municipal.py).
+Las dos tablas contienen solo los municipios con más de UMBRAL_POBLACION habitantes.
 """
 import json
 from pathlib import Path
@@ -64,8 +65,8 @@ def _pernoctaciones_eoh():
                .rename(columns={"Total": f"pernoctaciones_{ANIO}"}))
 
 
-def construir_municipios():
-    """Padrón + DGT + EOH -> municipios: población, provincia, pernoctaciones y mas_10000."""
+def _municipios_completos():
+    """Padrón + provincia (DGT) + EOH -> todos los municipios, SIN filtrar por población."""
     with ARCHIVO_PADRON.open("r", encoding="utf-8") as archivo:
         series = json.load(archivo)
 
@@ -91,14 +92,23 @@ def construir_municipios():
     # Provincia: los 2 primeros dígitos del código INE, con el nombre sacado de la DGT
     municipios.insert(2, "provincia", municipios["cod_ine"].str[:2].map(_provincias_dgt()))
 
-    # Único cruce por cod_ine: la EOH se añade por left join (no se pierde ningún municipio)
+    # Cruce por cod_ine: la EOH se añade por left join (no se pierde ningún municipio).
+    # La comprobación va ANTES del filtro: la EOH incluye puntos de menos de 10.000 habitantes.
     pernoctaciones = _pernoctaciones_eoh()
     if not pernoctaciones["cod_ine"].isin(municipios["cod_ine"]).all():
         raise ValueError("Hay puntos turísticos de la EOH que no existen en el Padrón")
-    municipios = municipios.merge(pernoctaciones, on="cod_ine", how="left", validate="one_to_one")
+    return municipios.merge(pernoctaciones, on="cod_ine", how="left", validate="one_to_one")
 
-    # Marca el filtro de tamaño sin eliminar filas; sin población implica False
-    municipios["mas_10000"] = municipios[f"pob_{ANIO}"].gt(UMBRAL_POBLACION).fillna(False)
+
+def _solo_mayores_del_umbral(municipios):
+    """Filtro del caso: solo municipios con más de UMBRAL_POBLACION habitantes en <ANIO>.
+    Sin población de ese año no pasan el filtro (un NaN no es mayor que el umbral)."""
+    return municipios[municipios[f"pob_{ANIO}"].gt(UMBRAL_POBLACION)].reset_index(drop=True)
+
+
+def construir_municipios():
+    """Padrón + DGT + EOH -> municipios con más de 10.000 habitantes."""
+    municipios = _solo_mayores_del_umbral(_municipios_completos())
 
     PROCESSED.mkdir(parents=True, exist_ok=True)
     municipios.to_parquet(PROCESSED / "municipios.parquet", index=False)
@@ -106,7 +116,7 @@ def construir_municipios():
 
 
 def construir_vehiculos():
-    """DGT -> vehiculos: parque y distintivos por municipio, con sin_especificar."""
+    """DGT -> vehiculos: parque y distintivos de los municipios con más de 10.000 habitantes."""
     dgt = pd.read_excel(ARCHIVO_DGT, dtype={"Código INE": str})
 
     vehiculos = dgt[["Código INE", "Municipio", "Provincia", "Parque Total",
@@ -118,10 +128,14 @@ def construir_vehiculos():
         "Distintivo 0": "dist_0",
         "Distintivo ECO": "dist_eco",
     })
-    # Las filas "Sin Especificar" se marcan, no se eliminan
-    vehiculos["sin_especificar"] = vehiculos["nombre"].str.contains(
-        "Sin Especificar", regex=False, na=False)
     vehiculos["nombre"] = _limpiar_nombre(vehiculos["nombre"])
+
+    # Los municipios del filtro se deciden con la población del Padrón
+    codigos = set(_solo_mayores_del_umbral(_municipios_completos())["cod_ine"])
+    faltan = codigos - set(vehiculos["cod_ine"])
+    if faltan:
+        raise ValueError(f"Municipios del filtro que no están en la DGT: {sorted(faltan)}")
+    vehiculos = vehiculos[vehiculos["cod_ine"].isin(codigos)].reset_index(drop=True)
 
     PROCESSED.mkdir(parents=True, exist_ok=True)
     vehiculos.to_parquet(PROCESSED / "vehiculos.parquet", index=False)
