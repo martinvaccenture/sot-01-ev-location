@@ -196,6 +196,41 @@ La ejecución en Amazon EC2 utiliza el IAM Role asociado a la instancia para acc
 streamlit run app/streamlit_app.py
 ```
 
+## Uso de rutas S3
+
+Las rutas S3 del proyecto se definen mediante variables de entorno en un archivo `.env`:
+
+```env
+AWS_REGION=eu-north-1
+S3_RAW_PATH=s3://nombre-bucket/raw-data/
+S3_SILVER_PATH=s3://nombre-bucket/silver/
+S3_GOLD_PATH=s3://nombre-bucket/gold/
+```
+
+El archivo `.env` no se versiona en Git. Utilizar `.env.example` como plantilla para configurar el entorno local.
+
+Para utilizar las rutas desde Python:
+
+```python
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+RAW_PATH = os.getenv("S3_RAW_PATH")
+SILVER_PATH = os.getenv("S3_SILVER_PATH")
+GOLD_PATH = os.getenv("S3_GOLD_PATH")
+```
+
+Por ejemplo:
+
+```python
+input_path = f"{SILVER_PATH}municipios.parquet"
+output_path = f"{GOLD_PATH}scoring_municipios.parquet"
+```
+
+Esto evita hardcodear las rutas S3 en los scripts y permite cambiar la configuración sin modificar el código.
+
 ### Uso de IA generativa
 
 Durante el desarrollo se ha utilizado IA generativa como herramienta de apoyo.
