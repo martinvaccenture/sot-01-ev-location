@@ -63,6 +63,7 @@ def run_pipeline():
         construir_vehiculos()
 
         logger.info("Silver layer municipal completed successfully.")
+        
 
 
         # ----------------------------------------------------
