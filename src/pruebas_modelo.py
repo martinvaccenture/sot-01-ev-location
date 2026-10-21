@@ -1,159 +1,83 @@
+
+"""
+Pruebas del modelo EV Location Intelligence.
+
+Genera la tabla Gold y ejecuta los análisis exploratorios.
+Todas las funciones están implementadas en gold.py.
+"""
+
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 
 from gold import (
-    ESCENARIOS,
-    INDICADORES,
-    PESOS,
+    generar_gold,
+    comprobar_gold,
+    analizar_atipicos,
     analizar_sensibilidad,
-    analizar_indicadores,
-    calcular_indicadores,
-    calcular_ranking,
-    cargar_parquet,
-    comparar_con_poblacion,
-    construir_dataframe_municipal,
-    diagnosticar_nulos_indicadores,
-    diagnosticar_uniones,
-    mostrar_resumen_dataframe,
-    normalizar_indicadores,
-    seleccionar_top20,
+    analizar_posibles_flotas,
+    comparar_con_baseline,
+    graficos_indicadores,
+    grafico_comparacion,
+    analizar_kmeans,
+    graficos_kmeans,
 )
 
 
-CARPETA_DATOS = Path(__file__).resolve().parents[1] / "data"
-ARCHIVOS_PARQUET = {
-    "municipios": CARPETA_DATOS / "municipios.parquet",
-    "vehiculos": CARPETA_DATOS / "vehiculos.parquet",
-    "puntos_recarga": CARPETA_DATOS / "puntos_recarga.parquet",
+# Rutas del proyecto.
+RAIZ = Path(__file__).resolve().parents[1]
+CARPETA_DATOS = RAIZ / "data"
+RUTA_GOLD = CARPETA_DATOS / "gold.parquet"
+
+PESOS_MODELO = [1 / 6, 1 / 3, 1 / 3, 1 / 6]
+ESCENARIOS_SENSIBILIDAD = {
+    "Actual": PESOS_MODELO,
+    "Equilibrado": [0.25, 0.25, 0.25, 0.25],
+    "Electrificación": [0.15, 0.50, 0.20, 0.15],
+    "Infraestructura": [0.15, 0.20, 0.50, 0.15],
+    "Crecimiento": [0.15, 0.20, 0.20, 0.45],
 }
 
 
-def main():
-    dataframes = {}
-
-        # Carga cada fuente y muestra su estructura y valores ausentes.
-    for nombre, ruta in ARCHIVOS_PARQUET.items():
-        df = cargar_parquet(ruta)
-        mostrar_resumen_dataframe(df, nombre)
-        dataframes[nombre] = df
-
-        # Revisa las claves antes de unir las tres fuentes.
-    diagnosticar_uniones(
-        dataframes["municipios"],
-        dataframes["vehiculos"],
-        dataframes["puntos_recarga"],
+def main(pesos=None, escenarios=None):
+    pesos = PESOS_MODELO if pesos is None else pesos
+    escenarios = (
+        ESCENARIOS_SENSIBILIDAD if escenarios is None else escenarios
     )
 
-        # Construye los datos municipales y calcula los cinco indicadores.
-    df_municipal = construir_dataframe_municipal(
-        dataframes["municipios"],
-        dataframes["vehiculos"],
-        dataframes["puntos_recarga"],
-    )
-    df_indicadores = calcular_indicadores(df_municipal)
-    diagnosticar_nulos_indicadores(
-        dataframes["municipios"],
-        dataframes["vehiculos"],
-        dataframes["puntos_recarga"],
-        df_municipal,
-        df_indicadores,
-    )
-    # Muestra estadísticas, correlaciones, atípicos y gráficas navegables.
-    analizar_indicadores(df_indicadores)
+    print("Pesos del modelo:")
+    print([round(peso * 100, 1) for peso in pesos], "%")
 
-    # Normaliza los indicadores y calcula el ranking con los pesos base.
-    df_normalizado = normalizar_indicadores(df_indicadores)
-    ranking_base = calcular_ranking(df_normalizado, PESOS)
-    top20_base = seleccionar_top20(ranking_base)
-        # Usa el ranking por población como referencia para el score base.
-    comparacion_baseline = comparar_con_poblacion(
-        df_indicadores, ranking_base
-    )
-        # Recalcula los rankings con los mismos datos y distintos pesos.
-    resultados_sensibilidad = analizar_sensibilidad(
-        df_normalizado, ESCENARIOS
-    )
+    # 1. Generar y guardar la tabla Gold.
+    gold = generar_gold(CARPETA_DATOS, RUTA_GOLD, pesos)
 
-    print("\n=== Pesos de los escenarios ===")
-    for nombre_escenario, pesos in ESCENARIOS.items():
-        print(f"\n{nombre_escenario}:")
-        for indicador, peso in pesos.items():
-            print(f"  {indicador}: {peso:.0%}")
-        print(f"  Suma: {sum(pesos.values()):.0%}")
+    print(f"\nTabla Gold generada: {RUTA_GOLD}")
 
-    print("\n=== Opportunity Score base ===")
-    print(f"Municipios evaluados: {len(ranking_base):,}")
-    print(
-        "Rango de scores: "
-        f"{ranking_base['opportunity_score'].min():.2f} - "
-        f"{ranking_base['opportunity_score'].max():.2f}"
-    )
-    print("Top 20, con máximo 3 municipios por provincia:")
-    print(
-        top20_base[[
-            "codigo_ine", "municipio", "provincia",
-            "opportunity_score", "posicion_ranking",
-        ]].to_string(index=False)
-    )
+    # 2. Comprobar calidad y analizar valores atípicos.
+    comprobar_gold(gold)
+    analizar_atipicos(gold)
 
-    baseline_poblacion = comparacion_baseline.nsmallest(
-        20, "posicion_poblacion"
-    )
-    codigos_baseline = set(baseline_poblacion["codigo_ine"])
-    coincidencias_score = set(
-        ranking_base.head(20)["codigo_ine"]
-    ) & codigos_baseline
-    coincidencias_seleccion = set(
-        top20_base["codigo_ine"]
-    ) & codigos_baseline
-    print("\n=== Baseline: ranking por población ===")
-    print(
-        "Coincidencias entre Top 20 bruto por score y población: "
-        f"{len(coincidencias_score)} / 20"
-    )
-    print(
-        "Coincidencias con el Top 20 score limitado a 3 por provincia: "
-        f"{len(coincidencias_seleccion)} / 20"
-    )
-    print(
-        baseline_poblacion[[
-            "codigo_ine", "municipio", "poblacion",
-            "posicion_poblacion", "opportunity_score",
-            "posicion_modelo", "cambio_posicion",
-        ]].to_string(index=False)
-    )
+    # 3. Revisar posibles flotas, sin excluir municipios.
+    analizar_posibles_flotas(gold)
 
-    seleccionados_base = set(
-        resultados_sensibilidad.loc[
-            resultados_sensibilidad["seleccionado_Base"], "codigo_ine"
-        ]
-    )
-    print("\n=== Sensibilidad del Top 20 ===")
-    for nombre_escenario in ESCENARIOS:
-        seleccionados = set(
-            resultados_sensibilidad.loc[
-                resultados_sensibilidad[
-                    f"seleccionado_{nombre_escenario}"
-                ],
-                "codigo_ine",
-            ]
-        )
-        print(
-            f"{nombre_escenario}: {len(seleccionados)} seleccionados; "
-            f"{len(seleccionados & seleccionados_base)} coinciden con Base"
-        )
+    # 4. Obtener el Top 20 y compararlo con el baseline.
+    modelo, baseline = comparar_con_baseline(gold)
 
-    print("\n=== DataFrame municipal con indicadores ===")
-    print(f"Filas: {len(df_indicadores):,}")
-    print(
-        df_indicadores[
-            ["codigo_ine", "municipio", "provincia", *INDICADORES]
-        ].head().to_string(index=False)
-    )
+    # 5. Analizar la estabilidad del Top 20 ante cambios de pesos.
+    analizar_sensibilidad(gold, escenarios)
 
+    # 6. Primera ventana: histogramas, boxplots y correlación.
+    graficos_indicadores(gold)
+
+    # 7. Segunda ventana: baseline y ranking del modelo.
+    grafico_comparacion(modelo, baseline)
+
+    # 8. Tercera ventana: análisis de K-Means.
+    resultado_kmeans, metricas = analizar_kmeans(gold)
+    graficos_kmeans(resultado_kmeans, metricas)
+
+    # 9. Mostrar las tres ventanas.
     plt.show()
-    return df_indicadores
 
 
 if __name__ == "__main__":
