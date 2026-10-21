@@ -1,27 +1,41 @@
-from pathlib import Path
+import os
 
 import requests
+import s3fs
+from dotenv import load_dotenv
 
+# ============================================================
+# CONFIGURACIÓN
+# ============================================================
+load_dotenv()
 
+AWS_REGION = os.getenv("AWS_REGION")
+RAW_PATH = os.getenv("S3_RAW_PATH")
+
+# ============================================================
+# URL DGT
+# ============================================================
 URL_DGT = (
     "https://nap.dgt.es/datex2/v3/miterd/"
     "EnergyInfrastructureTablePublication/electrolineras.xml"
 )
 
+# ============================================================
+# DESCARGA DGT
+# ============================================================
+def descargar_dgt():
+    """
+    Descarga el XML de puntos de recarga de la DGT
+    y lo guarda directamente en la capa RAW de S3.
+    """
 
-def descargar_dgt(carpeta_destino: Path) -> Path:
-    """Descarga el XML de puntos de recarga de la DGT."""
-
-    carpeta_destino.mkdir(parents=True, exist_ok=True)
-
-    archivo_destino = carpeta_destino / "electrolineras.xml"
-
-    response = requests.get(
-        URL_DGT,
-        timeout=(30, 300)
-    )
+    response = requests.get(URL_DGT, timeout=(30, 300))
     response.raise_for_status()
 
-    archivo_destino.write_bytes(response.content)
+    ruta_destino = (f"{RAW_PATH}"
+        "dgt/electrolineras.xml")
 
-    return archivo_destino
+    s3 = s3fs.S3FileSystem()
+
+    with s3.open(ruta_destino, "wb") as archivo:
+        archivo.write(response.content)
