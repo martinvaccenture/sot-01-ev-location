@@ -4,6 +4,12 @@ import boto3
 
 from io import BytesIO
 import plotly.express as px
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+GOLD_PATH = os.getenv("S3_GOLD_PATH")
 
 st.set_page_config(
     page_title="EV Location Intelligence",
@@ -26,20 +32,11 @@ st.markdown(
 
 @st.cache_data
 def load_data():
-
-    s3 = boto3.client("s3")
-
-    response = s3.get_object(
-        Bucket="sot-01-ev-location",
-        Key="gold/municipios.parquet"
-    )
-
     df = pd.read_parquet(
-        BytesIO(response["Body"].read())
+        f"{GOLD_PATH}gold.parquet"
     )
 
     return df
-
 
 df = load_data()
 
