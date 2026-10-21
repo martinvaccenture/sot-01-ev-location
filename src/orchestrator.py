@@ -2,11 +2,11 @@ import logging
 import sys
 from datetime import datetime
 
-from ingesta_puntos_recarga import descargar_dgt as descargar_dgt_puntos
-from ingestion_municipal import *
-from silver_municipal import *
-from silver_cargadores_geometria import *
-from gold import *
+from src.bronze.ingesta_puntos_recarga import descargar_dgt as descargar_dgt_puntos
+from src.bronze.ingestion_municipal import *
+from src.silver.silver_municipal import *
+from src.silver.silver_cargadores_geometria import *
+from src.gold.gold import *
 from dotenv import load_dotenv
 
 
