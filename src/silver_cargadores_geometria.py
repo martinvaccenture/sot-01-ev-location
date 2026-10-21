@@ -2,6 +2,9 @@
 
 import os
 import xml.etree.ElementTree as ET
+import tempfile
+import zipfile
+from pathlib import Path
 
 import geopandas as gpd
 import pandas as pd
@@ -137,18 +140,59 @@ def convertir_coordenadas_en_geometrias(df):
 # PREPROCESADO MUNICIPIOS CNIG
 # ============================================================
 
-def preparar_municipios(
-    ruta_peninbal,
-    ruta_canarias
-):
+def leer_shapefile_s3(ruta_zip, nombre_shp):
     """
-    Lee los municipios de Península/Baleares y Canarias,
+    Lee un Shapefile contenido en un ZIP almacenado en S3.
+    """
+
+    s3 = s3fs.S3FileSystem()
+
+    with tempfile.TemporaryDirectory() as carpeta_temporal:
+
+        ruta_zip_temporal = (
+            Path(carpeta_temporal)
+            / "archivo.zip")
+
+        s3.get(ruta_zip,
+            str(ruta_zip_temporal))
+
+        with zipfile.ZipFile(
+            ruta_zip_temporal,
+            "r") as archivo_zip:
+
+            archivo_zip.extractall(
+                carpeta_temporal)
+
+        ruta_shp = (
+            Path(carpeta_temporal)
+            / nombre_shp)
+
+        gdf = gpd.read_file(
+            ruta_shp)
+
+    return gdf
+
+
+def preparar_municipios():
+    """
+    Lee desde S3 los municipios de Península/Baleares y Canarias,
     unifica el CRS y genera un único GeoDataFrame.
     """
 
-    gdf_peninbal = gpd.read_file(ruta_peninbal)
-    gdf_canarias = gpd.read_file(ruta_canarias)
+    ruta_peninbal = (f"{RAW_PATH}"
+        "cnig/recintos_municipales_peninbal.zip")
+
+    ruta_canarias = (f"{RAW_PATH}"
+        "cnig/recintos_municipales_canarias.zip")
+
+    gdf_peninbal = leer_shapefile_s3(ruta_peninbal,
+        "recintos_municipales_inspire_peninbal_etrs89.shp")
+
+    gdf_canarias = leer_shapefile_s3(ruta_canarias,
+        "recintos_municipales_inspire_canarias_wgs84.shp")
+
     gdf_peninbal = gdf_peninbal.to_crs("EPSG:4326")
+
     gdf_canarias = gdf_canarias.to_crs("EPSG:4326")
 
     columnas_municipio = [
@@ -158,6 +202,7 @@ def preparar_municipios(
     ]
 
     gdf_peninbal = gdf_peninbal[columnas_municipio].copy()
+
     gdf_canarias = gdf_canarias[columnas_municipio].copy()
 
     gdf_municipios = gpd.GeoDataFrame(
