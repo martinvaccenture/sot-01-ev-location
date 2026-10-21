@@ -1,29 +1,42 @@
-"""Silver municipal (DE1): tablas limpias a partir de los originales de data/raw/.
+"""Silver municipal (DE1): tablas limpias a partir de los originales de raw.
 
-Cada función lee lo que necesita de data/raw/, construye su tabla, la guarda en
-data/processed/ (Parquet) y la devuelve. No reciben argumentos ni ejecutan nada
-al importarse. Requiere haber ejecutado antes la ingesta (ingestion_municipal.py).
+Cada función lee de S3_RAW_PATH y guarda en S3_SILVER_PATH (Parquet), según el .env.
+No reciben argumentos y no devuelven nada. Requiere haber ejecutado antes la ingesta.
 Las dos tablas contienen solo los municipios con más de UMBRAL_POBLACION habitantes.
 """
 import json
-from pathlib import Path
+import os
 
+import fsspec
 import pandas as pd
+from dotenv import load_dotenv
 
-# Rutas relativas a la raíz del repositorio (este archivo está en src/)
-RAIZ = Path(__file__).resolve().parents[1]
-RAW = RAIZ / "data" / "raw"
-PROCESSED = RAIZ / "data" / "processed"
+# Variables del .env: S3_RAW_PATH, S3_SILVER_PATH y AWS_REGION
+load_dotenv()
 
 # Originales generados por la ingesta
-ARCHIVO_DGT = RAW / "dgt" / "DatosMunicipalesGeneral_2025.xlsx"
-ARCHIVO_PADRON = RAW / "ine" / "padron_29005.json"
-ARCHIVO_EOH = RAW / "ine" / "eoh_2078.csv"
+NOMBRE_DGT = "DatosMunicipalesGeneral_2025.xlsx"
+NOMBRE_PADRON = "padron_29005.json"
+NOMBRE_EOH = "eoh_2078.csv"
 
 # Parámetros del análisis: para cambiar de periodo solo hay que tocar estas líneas
 ANIO = 2025
 ANIO_BASE = 2020
 UMBRAL_POBLACION = 10_000
+
+
+def _ruta(variable, *partes):
+    """Ruta dentro de raw o silver. Falla con un mensaje claro si la variable no está en el .env."""
+    base = os.getenv(variable, "").strip().rstrip("/")
+    if not base:
+        raise RuntimeError(f"Falta {variable} en el .env")
+    return "/".join([base, *partes])
+
+
+def _guardar_parquet(tabla, nombre):
+    """Guarda la tabla en silver como Parquet, sin índice (S3 o local; en local crea las carpetas)."""
+    with fsspec.open(_ruta("S3_SILVER_PATH", nombre), "wb") as archivo:
+        tabla.to_parquet(archivo, index=False)
 
 
 def _limpiar_nombre(nombres):
@@ -33,8 +46,8 @@ def _limpiar_nombre(nombres):
 
 def _provincias_dgt():
     """DGT -> diccionario {código de provincia (2 dígitos): nombre de la provincia}."""
-    dgt = pd.read_excel(ARCHIVO_DGT, usecols=["Código INE", "Provincia"],
-                        dtype={"Código INE": str})
+    dgt = pd.read_excel(_ruta("S3_RAW_PATH", "dgt", NOMBRE_DGT),
+                        usecols=["Código INE", "Provincia"], dtype={"Código INE": str})
     dgt["cod_provincia"] = dgt["Código INE"].str[:2]
     # Cada código de provincia debe tener un único nombre
     if (dgt.groupby("cod_provincia")["Provincia"].nunique() != 1).any():
@@ -44,7 +57,8 @@ def _provincias_dgt():
 
 def _pernoctaciones_eoh():
     """EOH -> pernoctaciones de <ANIO> por cod_ine (España y Extranjero sumados)."""
-    eoh = pd.read_csv(ARCHIVO_EOH, sep=";", dtype=str, encoding="utf-8-sig")
+    eoh = pd.read_csv(_ruta("S3_RAW_PATH", "ine", NOMBRE_EOH),
+                      sep=";", dtype=str, encoding="utf-8-sig")
 
     # Código INE: los 5 primeros dígitos de "Puntos turísticos"
     eoh["cod_ine"] = eoh["Puntos turísticos"].str.extract(r"^([0-9]{5})", expand=False)
@@ -67,7 +81,7 @@ def _pernoctaciones_eoh():
 
 def _municipios_completos():
     """Padrón + provincia (DGT) + EOH -> todos los municipios, SIN filtrar por población."""
-    with ARCHIVO_PADRON.open("r", encoding="utf-8") as archivo:
+    with fsspec.open(_ruta("S3_RAW_PATH", "ine", NOMBRE_PADRON), "rb") as archivo:
         series = json.load(archivo)
 
     filas = []
@@ -107,17 +121,13 @@ def _solo_mayores_del_umbral(municipios):
 
 
 def construir_municipios():
-    """Padrón + DGT + EOH -> municipios con más de 10.000 habitantes."""
-    municipios = _solo_mayores_del_umbral(_municipios_completos())
-
-    PROCESSED.mkdir(parents=True, exist_ok=True)
-    municipios.to_parquet(PROCESSED / "municipios.parquet", index=False)
-    return municipios
+    """Padrón + DGT + EOH -> silver/municipios.parquet (más de 10.000 habitantes)."""
+    _guardar_parquet(_solo_mayores_del_umbral(_municipios_completos()), "municipios.parquet")
 
 
 def construir_vehiculos():
-    """DGT -> vehiculos: parque y distintivos de los municipios con más de 10.000 habitantes."""
-    dgt = pd.read_excel(ARCHIVO_DGT, dtype={"Código INE": str})
+    """DGT -> silver/vehiculos.parquet (parque y distintivos de los municipios del filtro)."""
+    dgt = pd.read_excel(_ruta("S3_RAW_PATH", "dgt", NOMBRE_DGT), dtype={"Código INE": str})
 
     vehiculos = dgt[["Código INE", "Municipio", "Provincia", "Parque Total",
                      "Distintivo 0", "Distintivo ECO"]].rename(columns={
@@ -137,6 +147,4 @@ def construir_vehiculos():
         raise ValueError(f"Municipios del filtro que no están en la DGT: {sorted(faltan)}")
     vehiculos = vehiculos[vehiculos["cod_ine"].isin(codigos)].reset_index(drop=True)
 
-    PROCESSED.mkdir(parents=True, exist_ok=True)
-    vehiculos.to_parquet(PROCESSED / "vehiculos.parquet", index=False)
-    return vehiculos
+    _guardar_parquet(vehiculos, "vehiculos.parquet")
