@@ -300,7 +300,11 @@ def medir_cruces_fallidos(gdf_join):
         )
     }
 
-    return metricas
+    gdf_cruces_fallidos = gdf_join[
+        gdf_join["NATCODE"].isna()
+    ].copy()
+
+    return metricas, gdf_cruces_fallidos
 
 
 # ============================================================
