@@ -45,21 +45,20 @@ def tabla(datos, columnas=None):
 # ============================================================
 
 def cargar_datos(carpeta):
-    carpeta = Path(carpeta)
 
-    m = pd.read_parquet(carpeta / "municipios.parquet").rename(columns={
+    m = pd.read_parquet(carpeta + "municipios.parquet").rename(columns={
         "cod_ine": "codigo_ine",
         "nombre": "municipio",
         "pob_2025": "poblacion",
         "pob_2020": "poblacion_5y",
     })
 
-    v = pd.read_parquet(carpeta / "vehiculos.parquet").rename(columns={
+    v = pd.read_parquet(carpeta + "vehiculos.parquet").rename(columns={
         "cod_ine": "codigo_ine",
         "parque_total": "vehiculos",
     })
 
-    p = pd.read_parquet(carpeta / "puntos_recarga.parquet").rename(columns={
+    p = pd.read_parquet(carpeta + "puntos_recarga.parquet").rename(columns={
         "refill_points_50kw": "puntos_rapidos",
     })
 

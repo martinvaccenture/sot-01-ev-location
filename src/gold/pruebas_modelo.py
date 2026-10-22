@@ -10,7 +10,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 
-from gold import (
+from gold.gold import (
     generar_gold,
     comprobar_gold,
     analizar_atipicos,

@@ -1,20 +1,21 @@
 """Ingesta de las fuentes municipales (DE1): DGT, INE Padrón e INE EOH.
 
-Cada función guarda el original SIN modificar en la ruta S3_RAW_PATH del .env.
-No reciben argumentos y no devuelven nada.
+Cada función guarda el original SIN modificar en data/raw/ y devuelve su ruta.
+Las funciones no reciben argumentos y no ejecutan nada al importarse.
 """
-import os
+from pathlib import Path
 
-import fsspec
-import requests
-from dotenv import load_dotenv
+import requests # type: ignore
 
-load_dotenv()
+# Rutas relativas a la raíz del repositorio (este archivo está en src/)
+RAIZ = Path(__file__).resolve().parents[1]
+RAW_DGT = RAIZ / "data" / "raw" / "dgt"
+RAW_INE = RAIZ / "data" / "raw" / "ine"
 
 # Nombres de los originales (silver los lee con estos nombres)
-NOMBRE_DGT = "DatosMunicipalesGeneral_2025.xlsx"
-NOMBRE_PADRON = "padron_29005.json"
-NOMBRE_EOH = "eoh_2078.csv"
+ARCHIVO_DGT = RAW_DGT / "DatosMunicipalesGeneral_2025.xlsx"
+ARCHIVO_PADRON = RAW_INE / "padron_29005.json"
+ARCHIVO_EOH = RAW_INE / "eoh_2078.csv"
 
 # Fuentes
 URL_DGT = (
@@ -26,25 +27,15 @@ URL_PADRON = "https://servicios.ine.es/wstempus/jsCache/ES/DATOS_TABLA/29005?tip
 URL_EOH = "https://www.ine.es/jaxiT3/files/t/csv_bdsc/2078.csv"
 
 
-def _ruta_raw(*partes):
-    """Ruta dentro de raw. Falla con un mensaje claro si S3_RAW_PATH no está en el .env."""
-    base = os.getenv("S3_RAW_PATH", "").strip().rstrip("/")
-    if not base:
-        raise RuntimeError("Falta S3_RAW_PATH en el .env")
-    return "/".join([base, *partes])
-
-
-def _guardar(contenido, ruta):
-    """Guarda bytes en la ruta (S3 o local; en local crea las carpetas)."""
-    with fsspec.open(ruta, "wb") as archivo:
-        archivo.write(contenido)
-
-
 def descargar_dgt():
-    """DGT: Excel de datos municipales 2025."""
+    """DGT: Excel de datos municipales 2025. Si ya está en raw, no lo vuelve a descargar."""
+    if ARCHIVO_DGT.is_file():
+        return ARCHIVO_DGT
+    RAW_DGT.mkdir(parents=True, exist_ok=True)
     respuesta = requests.get(URL_DGT, timeout=120)
     respuesta.raise_for_status()
-    _guardar(respuesta.content, _ruta_raw("dgt", NOMBRE_DGT))
+    ARCHIVO_DGT.write_bytes(respuesta.content)
+    return ARCHIVO_DGT
 
 
 def descargar_padron():
@@ -54,11 +45,15 @@ def descargar_padron():
     # El INE puede responder 200 con un aviso en vez de datos: debe ser una lista de series
     if not isinstance(respuesta.json(), list):
         raise RuntimeError(f"Respuesta inesperada del INE: {respuesta.text[:200]}")
-    _guardar(respuesta.content, _ruta_raw("ine", NOMBRE_PADRON))
+    RAW_INE.mkdir(parents=True, exist_ok=True)
+    ARCHIVO_PADRON.write_bytes(respuesta.content)
+    return ARCHIVO_PADRON
 
 
 def descargar_eoh():
     """INE EOH (tabla 2078) en CSV. Se usa el CSV porque trae el código INE de 5 dígitos."""
     respuesta = requests.get(URL_EOH, timeout=120)
     respuesta.raise_for_status()
-    _guardar(respuesta.content, _ruta_raw("ine", NOMBRE_EOH))
+    RAW_INE.mkdir(parents=True, exist_ok=True)
+    ARCHIVO_EOH.write_bytes(respuesta.content)
+    return ARCHIVO_EOH
