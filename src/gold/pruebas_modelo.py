@@ -1,31 +1,33 @@
-
-"""
-Pruebas del modelo EV Location Intelligence.
-Genera Gold, ejecuta los análisis y prepara los rankings para Streamlit.
-"""
+"""Pruebas del modelo EV Location Intelligence y preparación de rankings."""
 
 from pathlib import Path
+
 import matplotlib.pyplot as plt
+import pandas as pd
 
 from gold import (
-    generar_gold, comprobar_gold, analizar_atipicos,
-    analizar_sensibilidad, analizar_posibles_flotas,
-    comparar_con_baseline, graficos_indicadores,
-    grafico_comparacion, analizar_kmeans, graficos_kmeans,
-    preparar_escenarios, consolidar_escenarios,
+    analizar_atipicos,
+    analizar_kmeans,
+    analizar_posibles_flotas,
+    analizar_sensibilidad,
+    comparar_con_baseline,
+    comprobar_gold,
+    generar_gold,
+    grafico_comparacion,
+    graficos_indicadores,
+    graficos_kmeans,
+    preparar_escenarios,
 )
 
 
 RAIZ = Path(__file__).resolve().parents[2]
 CARPETA_DATOS = RAIZ / "data"
-
 RUTA_GOLD = CARPETA_DATOS / "gold.parquet"
 RUTA_TURISMO = CARPETA_DATOS / "ranking_turismo.parquet"
+CARPETA_RESULTADOS = RAIZ / "resultados"
 
 NORMALIZACION = "p5_p95"
-
 PESOS_MODELO = [1 / 6, 1 / 3, 1 / 3, 1 / 6]
-
 ESCENARIOS_SENSIBILIDAD = {
     "Actual": PESOS_MODELO,
     "Equilibrado": [0.25, 0.25, 0.25, 0.25],
@@ -34,122 +36,112 @@ ESCENARIOS_SENSIBILIDAD = {
     "Crecimiento": [0.15, 0.20, 0.20, 0.45],
 }
 
+# Valor prudente porque actualmente solo una parte de los municipios tiene
+# pernoctaciones observadas. Se puede sustituir al llamar a main().
+PESO_TURISMO = 0.10
 
-def main(pesos=None, escenarios=None, normalizacion=NORMALIZACION):
+# Umbrales de alerta revisables; no confirman que exista una flota empresarial.
+UMBRALES_RIESGO_FLOTA = {
+    "vehiculos_por_habitante": 2.0,
+    "cero_eco_por_1000": 200.0,
+}
 
+RUTAS_TABLAS_FINALES = {
+    "sin_turismo": CARPETA_RESULTADOS / "top20_sin_turismo.parquet",
+    "con_turismo": CARPETA_RESULTADOS / "top20_con_turismo.parquet",
+    "sin_turismo_sin_flotas": (
+        CARPETA_RESULTADOS / "top20_sin_turismo_sin_flotas.parquet"
+    ),
+    "con_turismo_sin_flotas": (
+        CARPETA_RESULTADOS / "top20_con_turismo_sin_flotas.parquet"
+    ),
+}
+
+
+def main(
+    pesos=None,
+    escenarios=None,
+    peso_turismo=PESO_TURISMO,
+    umbrales_flotas=None,
+    normalizacion=NORMALIZACION,
+):
+    """Ejecuta el análisis y deja configurables pesos, escenarios y filtros."""
     pesos = PESOS_MODELO if pesos is None else pesos
-
     escenarios = (
         ESCENARIOS_SENSIBILIDAD.copy()
         if escenarios is None else dict(escenarios)
     )
-
     escenarios["Actual"] = pesos
+    umbrales_flotas = (
+        UMBRALES_RIESGO_FLOTA.copy()
+        if umbrales_flotas is None else dict(umbrales_flotas)
+    )
 
-    print("Pesos del modelo:")
-    print([round(p * 100, 1) for p in pesos], "%")
+    print("Pesos del modelo actual:")
+    print([round(peso * 100, 1) for peso in pesos], "%")
     print(f"Normalización: {normalizacion}")
+    print(f"Peso de turismo con dato válido: {peso_turismo:.1%}")
+    print(f"Escenarios base: {len(escenarios)}; con turismo: {len(escenarios)}")
 
-    # 1. Generar Gold.
     gold = generar_gold(
         CARPETA_DATOS,
         pesos=pesos,
-        normalizacion=normalizacion
+        normalizacion=normalizacion,
     )
-
-    # 2. Calidad y valores atípicos.
     comprobar_gold(gold)
     analizar_atipicos(gold)
+    analizar_posibles_flotas(gold, umbrales_flotas)
 
-    # 3. Posibles flotas.
-    analizar_posibles_flotas(gold)
-
-    # 4. Ranking y baseline.
     modelo, baseline = comparar_con_baseline(gold)
-
-    # 5. Análisis de sensibilidad.
-    analizar_sensibilidad(
-        gold,
-        escenarios,
-        mostrar_cambios=True
-    )
-
-    # 6. Gráficos de indicadores y rankings.
     graficos_indicadores(gold)
     grafico_comparacion(modelo, baseline)
 
-    # 7. K-Means.
     gold, metricas = analizar_kmeans(gold)
     graficos_kmeans(gold, metricas)
 
-    # 8. Crear las dos tablas de cada escenario.
-    tablas_escenarios = preparar_escenarios(
+    preparacion = preparar_escenarios(
         gold,
         escenarios,
-        normalizacion=normalizacion
+        peso_turismo,
+        normalizacion,
+        umbrales_flotas,
+        escenario_referencia="Actual",
     )
+    analizar_sensibilidad(preparacion)
 
-    for nombre, tablas in tablas_escenarios.items():
+    CARPETA_RESULTADOS.mkdir(parents=True, exist_ok=True)
+    preparacion["gold"].to_parquet(RUTA_GOLD, index=False)
+    columnas_tabla = [
+        "posicion_top20", "municipio", "provincia", "poblacion",
+        "opportunity_score", "ranking_general", "aparicion_escenarios",
+        "posible_riesgo_flota",
+    ]
+    for nombre, tabla_final in preparacion["tablas_finales"].items():
+        print(f"\n=== TABLA FINAL: {nombre} ===")
+        print(f"Municipios: {len(tabla_final)}")
+        print(tabla_final[columnas_tabla].to_string(index=False))
+        tabla_final.to_parquet(RUTAS_TABLAS_FINALES[nombre], index=False)
 
-        print(f"\n{'=' * 75}")
-        print(f"ESCENARIO: {nombre}")
-        print(f"{'=' * 75}")
-
-        print("\nTABLA 1: CUATRO INDICADORES")
-        print(f"Municipios: {len(tablas['cuatro'])}")
-
-        print(
-            tablas["cuatro"][
-                [
-                    "municipio",
-                    "provincia",
-                    "opportunity_score",
-                    "ranking_general",
-                    "top20",
-                    "apariciones_escenarios"
-                ]
-            ].head(30).to_string(index=False)
-        )
-
-        print("\nTABLA 2: TURISMO")
-        print(f"Municipios: {len(tablas['turismo'])}")
-
-        print(
-            tablas["turismo"][
-                [
-                    "municipio",
-                    "provincia",
-                    "pernoctaciones_2025",
-                    "posicion_inicial",
-                    "score_final",
-                    "posicion_final",
-                    "top20_final",
-                    "cambio_posicion",
-                    "apariciones_finales"
-                ]
-            ].to_string(index=False)
-        )
-
-    # 9. Consolidar las tablas para Streamlit.
-    gold_streamlit, turismo_streamlit = consolidar_escenarios(
-        gold,
-        tablas_escenarios
+    ranking_turismo = pd.concat(
+        [
+            preparacion["tablas_finales"]["con_turismo"].assign(
+                tabla_final="con_turismo"
+            ),
+            preparacion["tablas_finales"]["con_turismo_sin_flotas"].assign(
+                tabla_final="con_turismo_sin_flotas"
+            ),
+        ],
+        ignore_index=True,
     )
+    ranking_turismo.to_parquet(RUTA_TURISMO, index=False)
 
-    # 10. Guardar únicamente dos archivos Parquet.
-    RUTA_GOLD.parent.mkdir(parents=True, exist_ok=True)
-
-    gold_streamlit.to_parquet(RUTA_GOLD, index=False)
-    turismo_streamlit.to_parquet(RUTA_TURISMO, index=False)
-
-    print(f"\nGold guardado en: {RUTA_GOLD}")
+    print(f"\nGold global guardado en: {RUTA_GOLD}")
+    print(f"Tablas finales guardadas en: {CARPETA_RESULTADOS}")
     print(f"Ranking de turismo guardado en: {RUTA_TURISMO}")
 
-    # 11. Mostrar gráficos.
     plt.show()
-
-    return tablas_escenarios
+    return preparacion
 
 
 if __name__ == "__main__":
-    tablas_escenarios = main()
+    resultado = main()

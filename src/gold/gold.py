@@ -2,6 +2,7 @@
 """Tabla Gold y análisis del proyecto EV Location Intelligence."""
 
 from pathlib import Path
+import unicodedata
 
 import numpy as np
 import pandas as pd
@@ -189,13 +190,28 @@ def analizar_atipicos(gold):
         print(f"{etiqueta}: {n} atípicos")
 
 
-def analizar_posibles_flotas(gold):
+def identificar_posibles_flotas(gold, umbrales_flotas):
+    columnas_requeridas = {
+        "vehiculos_por_habitante",
+        "cero_eco_por_1000",
+    }
+    if set(umbrales_flotas) != columnas_requeridas:
+        raise ValueError(
+            "Los umbrales deben definir vehículos por habitante y CERO/ECO por 1.000."
+        )
+
+    return (
+        gold["vehiculos_por_habitante"].gt(
+            umbrales_flotas["vehiculos_por_habitante"]
+        )
+        | gold["cero_eco_por_1000"].gt(umbrales_flotas["cero_eco_por_1000"])
+    )
+
+
+def analizar_posibles_flotas(gold, umbrales_flotas):
     seccion("POSIBLES FLOTAS: REVISIÓN PENDIENTE")
 
-    sospechosos = gold[
-        (gold["vehiculos_por_habitante"] > 2) |
-        (gold["cero_eco_por_1000"] > 200)
-    ].copy()
+    sospechosos = gold[identificar_posibles_flotas(gold, umbrales_flotas)].copy()
 
     top20 = seleccionar_top20(gold)
     puestos = dict(zip(top20.codigo_ine, range(1, 21)))
@@ -243,110 +259,73 @@ def comparar_con_baseline(gold):
 # 4. ANÁLISIS DE SENSIBILIDAD
 # ============================================================
 
-def analizar_sensibilidad(gold, escenarios, escenario_referencia=None, mostrar_cambios=False):
-    if not escenarios:
-        raise ValueError("Debes proporcionar al menos un escenario de pesos.")
-
-    if escenario_referencia is None:
-        escenario_referencia = next(iter(escenarios))
-
-    if escenario_referencia not in escenarios:
-        raise ValueError(f"El escenario '{escenario_referencia}' no existe.")
-
-    resultados = gold[["codigo_ine", "municipio", "provincia"]].copy()
-
-    for nombre, pesos in escenarios.items():
-        ranking = gold.copy()
-        ranking["score_escenario"] = calcular_score(ranking, pesos)
-        top20 = seleccionar_top20(ranking, "score_escenario")
-        resultados[nombre] = resultados.codigo_ine.isin(top20.codigo_ine)
-
-    nombres_escenarios = list(escenarios)
-    resultados["apariciones"] = resultados[nombres_escenarios].sum(axis=1)
-
-    resultados = (
-        resultados[resultados["apariciones"] > 0]
-        .sort_values(["apariciones", escenario_referencia, "municipio"],
-                     ascending=[False, False, True])
-        .reset_index(drop=True)
-    )
+def analizar_sensibilidad(preparacion):
+    """Resume la frecuencia de selección y los cambios entre los escenarios."""
+    gold = preparacion["gold"]
+    top20_escenarios = preparacion["top20_escenarios"]
+    nombres = preparacion["nombres_escenarios"]
+    apariciones = preparacion["apariciones"]
+    n_escenarios = len(top20_escenarios)
+    referencia = preparacion["escenario_referencia"]
+    referencia_key = (referencia, False)
+    codigos_referencia = set(top20_escenarios[referencia_key]["codigo_ine"])
 
     seccion("ANÁLISIS DE SENSIBILIDAD")
-    print("Escenarios y pesos:")
+    print(f"Escenarios evaluados: {n_escenarios}")
+    print(
+        "Pernoctaciones disponibles: "
+        f"{preparacion['n_municipios_turismo']}/{len(gold)} municipios"
+    )
+    print("Peso turístico aplicado solo con dato válido:")
+    print(f"{preparacion['peso_turismo']:.1%}")
+    print(
+        "Aparición: número de Top 20 en los que entra el municipio "
+        "dividido por el total de escenarios."
+    )
 
-    for nombre, pesos in escenarios.items():
-        print(f"{nombre}: {[round(p * 100, 1) for p in pesos]} %")
+    print("\nPesos efectivos por escenario:")
+    for clave, pesos in preparacion["pesos_escenarios"].items():
+        print(f"{nombres[clave]}: {[round(p * 100, 1) for p in pesos]} %")
 
-    tabla(resultados, ["municipio", "provincia", "apariciones", *nombres_escenarios])
+    columnas_escenarios = [nombres[clave] for clave in top20_escenarios]
+    tabla_apariciones = apariciones[
+        apariciones["aparicion_escenarios"] > 0
+    ].sort_values(
+        ["aparicion_escenarios", "municipio"],
+        ascending=[False, True],
+    )
+    tabla(tabla_apariciones[
+        ["municipio", "provincia", "aparicion_escenarios", *columnas_escenarios]
+    ])
 
-    n_estables = (resultados["apariciones"] == len(escenarios)).sum()
-    n_unicos = (resultados["apariciones"] == 1).sum()
-    print(f"\nMunicipios presentes en todos los {len(escenarios)} escenarios: {n_estables}")
+    n_estables = int(np.isclose(apariciones["aparicion_escenarios"], 1).sum())
+    n_unicos = int(np.isclose(
+        apariciones["aparicion_escenarios"], 1 / n_escenarios
+    ).sum())
+    print(f"\nMunicipios presentes en todos los {n_escenarios} escenarios: {n_estables}")
     print(f"Municipios presentes en un único escenario: {n_unicos}")
 
+    seccion("CAMBIOS RESPECTO A ACTUAL SIN TURISMO")
+    for clave, top in top20_escenarios.items():
+        if clave == referencia_key:
+            continue
+        codigos_nuevos = set(top["codigo_ine"])
+        print(
+            f"{nombres[clave]}: entran {len(codigos_nuevos - codigos_referencia)}, "
+            f"salen {len(codigos_referencia - codigos_nuevos)}"
+        )
+
     seccion("MUNICIPIOS ESTABLES Y SUS CARACTERÍSTICAS")
-
-    codigos_estables = resultados.loc[
-        resultados["apariciones"] == len(escenarios), "codigo_ine"
-    ]
-
-    estables = gold[gold["codigo_ine"].isin(codigos_estables)].sort_values("ranking_general")
-
+    estables = gold.loc[
+        np.isclose(gold["aparicion_escenarios"], 1)
+    ].sort_values("ranking_general")
     columnas_estables = [
         "municipio", "provincia", *INDICADORES,
-        "opportunity_score", "ranking_general",
+        "opportunity_score", "ranking_general", "aparicion_escenarios",
     ]
-
-    tabla(estables, columnas_estables)
-    print("\nIndicadores originales sin normalizar. Score y ranking del modelo actual.")
-
-    if mostrar_cambios:
-        referencia = gold.copy()
-        referencia["score_referencia"] = calcular_score(
-            referencia, escenarios[escenario_referencia]
-        )
-        referencia = referencia.sort_values(
-            ["score_referencia", "codigo_ine"], ascending=[False, True]
-        ).copy()
-        referencia["ranking_referencia"] = range(1, len(referencia) + 1)
-
-        top_referencia = seleccionar_top20(referencia, "score_referencia")
-        codigos_referencia = set(top_referencia["codigo_ine"])
-
-        columnas = [
-            "municipio", "provincia", *INDICADORES,
-            "score_referencia", "score_escenario",
-            "ranking_referencia", "ranking_escenario",
-        ]
-
-        for nombre, pesos in escenarios.items():
-            if nombre == escenario_referencia:
-                continue
-
-            comparacion = referencia.copy()
-            comparacion["score_escenario"] = calcular_score(comparacion, pesos)
-            comparacion = comparacion.sort_values(
-                ["score_escenario", "codigo_ine"], ascending=[False, True]
-            ).copy()
-            comparacion["ranking_escenario"] = range(1, len(comparacion) + 1)
-
-            top_nuevo = seleccionar_top20(comparacion, "score_escenario")
-            codigos_nuevos = set(top_nuevo["codigo_ine"])
-
-            entran = top_nuevo[~top_nuevo["codigo_ine"].isin(codigos_referencia)]
-            salen = comparacion[
-                comparacion["codigo_ine"].isin(codigos_referencia - codigos_nuevos)
-            ].sort_values("ranking_referencia")
-
-            seccion(f"CAMBIOS: {escenario_referencia} VS {nombre}")
-            print(f"Entran: {len(entran)} | Salen: {len(salen)}")
-            print("\nMUNICIPIOS QUE ENTRAN:")
-            tabla(entran, columnas)
-            print("\nMUNICIPIOS QUE SALEN:")
-            tabla(salen, columnas)
-            print("Los rankings generales no aplican el límite provincial.")
-
-    return resultados
+    tabla(estables[columnas_estables])
+    print("\nLos indicadores son valores originales sin normalizar.")
+    return preparacion
 
 
 # ============================================================
@@ -354,239 +333,181 @@ def analizar_sensibilidad(gold, escenarios, escenario_referencia=None, mostrar_c
 # ============================================================
 
 def normalizar_pernoctaciones(gold, normalizacion="p5_p95"):
-    """Normaliza el turismo con las observaciones disponibles de todo Gold."""
+    """Normaliza el turismo solo entre los municipios con dato disponible."""
+    if normalizacion not in ("p5_p95", "minmax"):
+        raise ValueError("La normalización debe ser 'p5_p95' o 'minmax'.")
+
     valores = pd.to_numeric(gold["pernoctaciones_2025"], errors="coerce")
     validos = valores.dropna()
     if validos.empty:
         return pd.Series(np.nan, index=gold.index)
 
-    minimo, maximo = (
-        validos.quantile([0.05, 0.95])
-        if normalizacion == "p5_p95"
-        else (validos.min(), validos.max())
-    )
+    if normalizacion == "p5_p95":
+        minimo, maximo = validos.quantile([0.05, 0.95])
+        valores_normalizar = valores.clip(minimo, maximo)
+    else:
+        minimo, maximo = validos.min(), validos.max()
+        valores_normalizar = valores
+
     if maximo == minimo:
         return pd.Series(0.0, index=gold.index).where(valores.notna())
 
-    return ((valores.clip(minimo, maximo) - minimo) / (maximo - minimo)).clip(0, 1)
+    return ((valores_normalizar - minimo) / (maximo - minimo)).clip(0, 1)
 
 
+def _slug_escenario(nombre):
+    nombre_ascii = unicodedata.normalize("NFKD", nombre)
+    nombre_ascii = nombre_ascii.encode("ascii", "ignore").decode("ascii")
+    return "_".join(nombre_ascii.lower().split())
 
-def preparar_escenarios(gold, escenarios, normalizacion="p5_p95", primeros=30):
-    """Crea dos tablas por escenario: cuatro indicadores y turismo."""
 
+def preparar_escenarios(
+    gold,
+    escenarios,
+    peso_turismo,
+    normalizacion,
+    umbrales_flotas,
+    escenario_referencia="Actual",
+):
+    """Prepara diez rankings, su frecuencia y las cuatro tablas de referencia.
+
+    Los escenarios turísticos sustituyen únicamente el peso reservado a turismo
+    cuando existe el dato. Si falta, se conserva íntegro el score de cuatro
+    indicadores; no se imputa ni se penaliza al municipio.
+    """
+    if not escenarios:
+        raise ValueError("Debes proporcionar escenarios base de pesos.")
+    if escenario_referencia not in escenarios:
+        raise ValueError(
+            f"El escenario de referencia '{escenario_referencia}' no existe."
+        )
+    if not 0 <= peso_turismo < 1:
+        raise ValueError("El peso de turismo debe estar entre 0 y 1, sin incluir 1.")
+
+    pesos_turismo = normalizar_pernoctaciones(gold, normalizacion)
+    riesgo_flotas = identificar_posibles_flotas(gold, umbrales_flotas)
     rankings = {}
+    top20_escenarios = {}
+    nombres_escenarios = {}
+    pesos_escenarios = {}
+    gold_global = gold.copy()
+    gold_global["posible_riesgo_flota"] = riesgo_flotas
 
-    # Primera fase: calcular el score de los cuatro indicadores.
     for nombre, pesos in escenarios.items():
-        d = gold.copy()
-        d["opportunity_score"] = calcular_score(d, pesos)
+        score_base = calcular_score(gold, pesos)
 
-        d = d.sort_values(
-            ["opportunity_score", "codigo_ine"],
-            ascending=[False, True]
-        ).reset_index(drop=True)
+        for incluir_turismo in (False, True):
+            clave = (nombre, incluir_turismo)
+            sufijo = "con_turismo" if incluir_turismo else "sin_turismo"
+            nombre_completo = f"{nombre} ({sufijo.replace('_', ' ')})"
+            slug = f"{_slug_escenario(nombre)}_{sufijo}"
+            score = score_base.copy()
 
-        d["ranking_general"] = range(1, len(d) + 1)
-        rankings[nombre] = d
+            if incluir_turismo:
+                tiene_turismo = pesos_turismo.notna()
+                score.loc[tiene_turismo] = (
+                    (1 - peso_turismo) * score_base.loc[tiene_turismo]
+                    + 100 * peso_turismo * pesos_turismo.loc[tiene_turismo]
+                )
+                pesos_efectivos = [
+                    peso * (1 - peso_turismo) for peso in pesos
+                ] + [peso_turismo]
+            else:
+                pesos_efectivos = list(pesos)
 
-    # Top 20 de cada escenario con máximo 3 municipios por provincia.
-    top20 = {
-        nombre: seleccionar_top20(d)
-        for nombre, d in rankings.items()
-    }
+            ranking = gold.copy()
+            ranking["score_escenario"] = score
+            ranking["posible_riesgo_flota"] = riesgo_flotas
+            ranking = ranking.sort_values(
+                ["score_escenario", "codigo_ine"],
+                ascending=[False, True],
+            ).reset_index(drop=True)
+            ranking["ranking_general_escenario"] = np.arange(
+                1, len(ranking) + 1
+            )
 
-    # Número de escenarios en los que aparece cada municipio.
-    apariciones = {
-        codigo: sum(
-            codigo in set(t.codigo_ine)
-            for t in top20.values()
-        )
-        for codigo in gold.codigo_ine
-    }
+            top20 = seleccionar_top20(ranking, "score_escenario")
+            top20["posicion_top20"] = np.arange(1, len(top20) + 1)
+            top20["nombre_escenario"] = nombre_completo
 
-    # Normalizar pernoctaciones utilizando todos los datos disponibles.
-    turismo = dict(zip(
-        gold.codigo_ine,
-        normalizar_pernoctaciones(gold, normalizacion)
-    ))
+            rankings[clave] = ranking
+            top20_escenarios[clave] = top20
+            nombres_escenarios[clave] = nombre_completo
+            pesos_escenarios[clave] = pesos_efectivos
 
-    tablas = {}
+            indice = ranking.set_index("codigo_ine")
+            puestos_top20 = top20.set_index("codigo_ine")["posicion_top20"]
+            gold_global[f"score_{slug}"] = gold_global["codigo_ine"].map(
+                indice["score_escenario"]
+            )
+            gold_global[f"ranking_general_{slug}"] = gold_global[
+                "codigo_ine"
+            ].map(indice["ranking_general_escenario"])
+            gold_global[f"top20_{slug}"] = gold_global["codigo_ine"].map(
+                puestos_top20
+            ).astype("Int64")
 
-    for nombre, d in rankings.items():
+    apariciones = pd.Series(0, index=gold_global.index, dtype="int64")
+    for top20 in top20_escenarios.values():
+        apariciones += gold_global["codigo_ine"].isin(
+            top20["codigo_ine"]
+        ).astype("int64")
 
-        d["apariciones_escenarios"] = (
-            d.codigo_ine.map(apariciones).astype(int)
-        )
-
-        puestos = dict(zip(
-            top20[nombre].codigo_ine,
-            range(1, len(top20[nombre]) + 1)
-        ))
-
-        d["top20"] = d.codigo_ine.map(puestos).astype("Int64")
-
-        if nombre != "Actual":
-            d = d.drop(columns="cluster", errors="ignore")
-
-        # Segunda fase: seleccionar los 30 mejores de este escenario.
-        candidatos = seleccionar_top20(d, n=primeros).copy()
-
-        candidatos["posicion_inicial"] = range(
-            1, len(candidatos) + 1
-        )
-
-        candidatos["pernoctaciones_norm"] = (
-            candidatos.codigo_ine.map(turismo)
-        )
-
-        tiene_turismo = candidatos["pernoctaciones_norm"].notna()
-
-        candidatos["datos_turismo_disponibles"] = tiene_turismo
-
-        normas = [c + "_norm" for c in INDICADORES]
-
-        # Pesos originales de este escenario.
-        pesos_originales = np.array(escenarios[nombre])
-
-        # Si hay turismo, reservamos el 10 % y reducimos
-        # proporcionalmente los cuatro pesos originales.
-        pesos_con_turismo = pesos_originales * 0.90
-
-        # Si no hay turismo, mantenemos los pesos originales.
-        pesos_sin_turismo = pesos_originales
-
-        score_con_turismo = 100 * (
-            candidatos[normas].dot(pesos_con_turismo)
-            + 0.10 * candidatos["pernoctaciones_norm"].fillna(0)
-        )
-
-        score_sin_turismo = 100 * (
-            candidatos[normas].dot(pesos_sin_turismo)
-        )
-
-        candidatos["score_final"] = np.where(
-            tiene_turismo,
-            score_con_turismo,
-            score_sin_turismo
-        )
-
-        # Ordenar los 30 candidatos según el nuevo score.
-        candidatos = candidatos.sort_values(
-            ["score_final", "codigo_ine"],
-            ascending=[False, True]
-        ).reset_index(drop=True)
-
-        candidatos["posicion_final"] = range(
-            1, len(candidatos) + 1
-        )
-
-        candidatos["top20_final"] = (
-            candidatos["posicion_final"]
-            .where(candidatos["posicion_final"] <= 20)
-            .astype("Int64")
-        )
-
-        candidatos["cambio_posicion"] = (
-            candidatos["posicion_inicial"]
-            - candidatos["posicion_final"]
-        )
-
-        tablas[nombre] = {
-            "cuatro": d,
-            "turismo": candidatos
-        }
-
-    # Contar apariciones en los Top 20 finales.
-    finales = [
-        set(t["turismo"].loc[
-            t["turismo"]["top20_final"].notna(),
+    gold_global["aparicion_escenarios"] = apariciones / len(top20_escenarios)
+    tabla_apariciones = gold_global[[
+        "codigo_ine", "municipio", "provincia", "aparicion_escenarios",
+    ]].copy()
+    for clave, top20 in top20_escenarios.items():
+        tabla_apariciones[nombres_escenarios[clave]] = tabla_apariciones[
             "codigo_ine"
-        ])
-        for t in tablas.values()
+        ].isin(top20["codigo_ine"])
+
+    for ranking in rankings.values():
+        ranking["aparicion_escenarios"] = ranking["codigo_ine"].map(
+            gold_global.set_index("codigo_ine")["aparicion_escenarios"]
+        )
+    for top20 in top20_escenarios.values():
+        top20["aparicion_escenarios"] = top20["codigo_ine"].map(
+            gold_global.set_index("codigo_ine")["aparicion_escenarios"]
+        )
+
+    tablas_finales = {}
+    variantes = {
+        "sin_turismo": (False, False),
+        "con_turismo": (True, False),
+        "sin_turismo_sin_flotas": (False, True),
+        "con_turismo_sin_flotas": (True, True),
+    }
+    columnas_finales = [
+        "codigo_ine", "municipio", "provincia", "poblacion",
+        "pernoctaciones_2025", "opportunity_score",
+        "ranking_general", "posicion_top20", "aparicion_escenarios",
+        "posible_riesgo_flota",
     ]
 
-    apariciones_finales = {
-        codigo: sum(codigo in grupo for grupo in finales)
-        for codigo in gold.codigo_ine
+    for nombre_tabla, (incluir_turismo, excluir_flotas) in variantes.items():
+        ranking = rankings[(escenario_referencia, incluir_turismo)].copy()
+        if excluir_flotas:
+            ranking = ranking.loc[~ranking["posible_riesgo_flota"]]
+
+        seleccion = seleccionar_top20(ranking, "score_escenario").copy()
+        seleccion["opportunity_score"] = seleccion["score_escenario"]
+        seleccion["ranking_general"] = seleccion["ranking_general_escenario"]
+        seleccion["posicion_top20"] = np.arange(1, len(seleccion) + 1)
+        tablas_finales[nombre_tabla] = seleccion[columnas_finales].copy()
+
+    return {
+        "gold": gold_global,
+        "rankings_escenarios": rankings,
+        "top20_escenarios": top20_escenarios,
+        "nombres_escenarios": nombres_escenarios,
+        "pesos_escenarios": pesos_escenarios,
+        "apariciones": tabla_apariciones,
+        "tablas_finales": tablas_finales,
+        "n_municipios_turismo": int(pesos_turismo.notna().sum()),
+        "peso_turismo": peso_turismo,
+        "escenario_referencia": escenario_referencia,
     }
-
-    for t in tablas.values():
-        t["turismo"]["apariciones_finales"] = (
-            t["turismo"]["codigo_ine"]
-            .map(apariciones_finales)
-            .astype(int)
-        )
-
-    return tablas
-
-
-def consolidar_escenarios(gold, tablas):
-    """Un Gold con escenarios y un Parquet con la unión de candidatos Top 30."""
-    general = gold.copy()
-    candidatos = {}
-    claves = {
-        "Actual": "actual",
-        "Equilibrado": "equilibrado",
-        "Electrificación": "electrificacion",
-        "Infraestructura": "infraestructura",
-        "Crecimiento": "crecimiento",
-    }
-
-    for nombre, t in tablas.items():
-        clave = claves.get(nombre, nombre.lower())
-        d, tur = t["cuatro"], t["turismo"]
-
-        columnas = ["codigo_ine", "top20"]
-        renombrar = {"top20": f"top20_{clave}"}
-
-        if nombre != "Actual":
-            columnas.append("opportunity_score")
-            renombrar["opportunity_score"] = f"score_{clave}"
-
-        general = general.merge(
-            d[columnas].rename(columns=renombrar),
-            on="codigo_ine",
-            validate="one_to_one"
-        )
-        candidatos[clave] = tur.set_index("codigo_ine")
-
-    general["apariciones_escenarios"] = general[
-        [c for c in general if c.startswith("top20_")]
-    ].notna().sum(axis=1)
-
-    union = set().union(*(set(t.index) for t in candidatos.values()))
-    turismo = general[general.codigo_ine.isin(union)].copy()
-
-    turismo["pernoctaciones_norm"] = turismo.codigo_ine.map(
-        next(iter(candidatos.values()))["pernoctaciones_norm"].to_dict()
-    )
-
-    for t in candidatos.values():
-        turismo["pernoctaciones_norm"] = (
-            turismo["pernoctaciones_norm"].combine_first(
-                turismo.codigo_ine.map(t["pernoctaciones_norm"])
-            )
-        )
-
-    for clave, t in candidatos.items():
-        cols = [
-            "score_final", "posicion_inicial", "posicion_final",
-            "top20_final", "cambio_posicion", "datos_turismo_disponibles"
-        ]
-        turismo = turismo.merge(
-            t[cols].rename(columns={c: f"{c}_{clave}" for c in cols}),
-            left_on="codigo_ine",
-            right_index=True,
-            how="left",
-            validate="one_to_one"
-        )
-
-    turismo["apariciones_finales"] = turismo[
-        [c for c in turismo if c.startswith("top20_final_")]
-    ].notna().sum(axis=1)
-
-    return general, turismo
 
 
 # ============================================================
