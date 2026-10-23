@@ -45,13 +45,17 @@ def tabla(datos, columnas=None):
 # ============================================================
 
 def cargar_datos(carpeta):
+    # String y no Path: Path rompe las rutas S3 ("s3://" -> "s3:/").
+    carpeta = str(carpeta)
+    if not carpeta.endswith(("/", "\\")):
+        carpeta += "/"
 
-    m = pd.read_parquet(carpeta / "municipios.parquet").rename(columns={
+    m = pd.read_parquet(carpeta + "municipios.parquet").rename(columns={
         "cod_ine": "codigo_ine", "nombre": "municipio",
         "pob_2025": "poblacion", "pob_2020": "poblacion_5y",
     })
 
-    v = pd.read_parquet(carpeta / "vehiculos.parquet").rename(columns={
+    v = pd.read_parquet(carpeta + "vehiculos.parquet").rename(columns={
         "cod_ine": "codigo_ine", "parque_total": "vehiculos",
     })
 
@@ -221,7 +225,7 @@ def analizar_posibles_flotas(gold, umbrales_flotas):
 
     top20 = seleccionar_top20(gold)
     puestos = dict(zip(top20.codigo_ine, range(1, 21)))
-    sospechosos["puesto_top20"] = sospechosos["codigo_ine"].map(puestos).fillna("-")
+    sospechosos["puesto_top20"] = sospechosos["codigo_ine"].map(puestos).astype("string").fillna("-")
     sospechosos = sospechosos.sort_values("ranking_general")
 
     print(f"Municipios detectados: {len(sospechosos)}")
@@ -346,7 +350,7 @@ def clasificar_riesgo_flota(gold, umbrales_flotas):
     if "riesgo_flota" in gold and gold["riesgo_flota"].notna().any():
         riesgo = (
             gold["riesgo_flota"].astype("string").str.strip().str.lower()
-            .fillna("normal")
+            .replace("", pd.NA).fillna("desconocido")
         )
         return riesgo, "vehiculos.parquet"
 
@@ -453,32 +457,26 @@ def preparar_escenarios(
     resumen["apariciones"] = _contar_apariciones(tablas_escenarios, resumen["codigo_ine"])
     resumen["aparicion_escenarios"] = resumen["apariciones"] / n
 
-    # En "confianza" los municipios con riesgo se eliminan antes de calcular cada Top 20.
-    confiable = ~resumen["riesgo_flota"].isin(valores_riesgo_excluidos)
-    mascara_confianza = dict(zip(resumen["codigo_ine"], confiable))
-    resumen["apariciones_confianza"] = _contar_apariciones(
-        tablas_escenarios, resumen["codigo_ine"], mascara_confianza
+    # Riesgo desconocido no se da por seguro hasta validar su clasificación.
+    confiable = ~resumen["riesgo_flota"].isin(
+        [*valores_riesgo_excluidos, "desconocido"]
     )
-    resumen["aparicion_confianza"] = resumen["apariciones_confianza"] / n
 
     columnas_top = [
         "codigo_ine", "municipio", "provincia", "poblacion",
         "pernoctaciones_2025", *INDICADORES, "riesgo_flota",
-        "apariciones", "puntuacion_aparicion", "score_medio_total",
-        "score_medio", "score_medio_turismo",
+        "apariciones", "aparicion_escenarios", "score_medio", "score_medio_turismo",
     ]
+    # Las apariciones son siempre las de los 8 escenarios originales, también en confianza.
     definiciones = {
-        "top_20": (resumen, "apariciones"),
-        "top_20_turismo": (resumen, "apariciones"),
-        "top_20_confianza": (resumen[confiable], "apariciones_confianza"),
-        "top_20_confianza_turismo": (resumen[confiable], "apariciones_confianza"),
+        "top_20": (resumen, "score_medio"),
+        "top_20_turismo": (resumen, "score_medio_turismo"),
+        "top_20_confianza": (resumen[confiable], "score_medio"),
+        "top_20_confianza_turismo": (resumen[confiable], "score_medio_turismo"),
     }
     tablas_top = {}
-    for nombre, (datos, apariciones) in definiciones.items():
-        top = seleccionar_top20(datos, [apariciones, "score_medio_total"]).copy()
-        top["apariciones"] = top[apariciones]
-        top["puntuacion_aparicion"] = top[apariciones] / n
-        top = top[columnas_top]
+    for nombre, (datos, desempate) in definiciones.items():
+        top = seleccionar_top20(datos, ["apariciones", desempate])[columnas_top].copy()
         top.insert(0, "ranking_20", np.arange(1, len(top) + 1))
         tablas_top[nombre] = top
 
