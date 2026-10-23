@@ -300,7 +300,11 @@ def medir_cruces_fallidos(gdf_join):
         )
     }
 
-    return metricas
+    gdf_cruces_fallidos = gdf_join[
+        gdf_join["NATCODE"].isna()
+    ].copy()
+
+    return metricas, gdf_cruces_fallidos
 
 
 # ============================================================
@@ -398,10 +402,10 @@ def guardar_resultados(
     Guarda los resultados directamente en la capa GOLD de S3.
     """
 
-    ruta_resultado = (f"{GOLD_PATH}"
+    ruta_resultado = (f"{SILVER_PATH}"
         "puntos_recarga.parquet")
 
-    ruta_fallidos = (f"{GOLD_PATH}"
+    ruta_fallidos = (f"{SILVER_PATH}"
         "cruces_fallidos.parquet")
 
     gdf_final.to_parquet(
