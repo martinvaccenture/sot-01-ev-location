@@ -12,7 +12,6 @@ from sklearn.decomposition import PCA
 from sklearn.metrics import silhouette_score
 
 
-# Configuración de gráficos.
 plt.rcParams["font.family"] = "Arial"
 plt.rcParams["axes.unicode_minus"] = False
 
@@ -30,6 +29,7 @@ ETIQUETAS = [
     "Crecimiento de población (%)",
 ]
 
+
 def seccion(titulo):
     print(f"\n{'=' * 75}\n{titulo}\n{'=' * 75}")
 
@@ -46,16 +46,13 @@ def tabla(datos, columnas=None):
 
 def cargar_datos(carpeta):
 
-    m = pd.read_parquet(carpeta + "municipios.parquet").rename(columns={
-        "cod_ine": "codigo_ine",
-        "nombre": "municipio",
-        "pob_2025": "poblacion",
-        "pob_2020": "poblacion_5y",
+    m = pd.read_parquet(carpeta / "municipios.parquet").rename(columns={
+        "cod_ine": "codigo_ine", "nombre": "municipio",
+        "pob_2025": "poblacion", "pob_2020": "poblacion_5y",
     })
 
-    v = pd.read_parquet(carpeta + "vehiculos.parquet").rename(columns={
-        "cod_ine": "codigo_ine",
-        "parque_total": "vehiculos",
+    v = pd.read_parquet(carpeta / "vehiculos.parquet").rename(columns={
+        "cod_ine": "codigo_ine", "parque_total": "vehiculos",
     })
 
     p = pd.read_parquet(carpeta + "puntos_recarga.parquet").rename(columns={
@@ -72,31 +69,29 @@ def cargar_datos(carpeta):
 
     for nombre, df in [("municipios", m), ("vehículos", v), ("recarga", p)]:
         df["codigo_ine"] = df["codigo_ine"].astype("string").str.strip().str.zfill(5)
-
         if df["codigo_ine"].isna().any() or df["codigo_ine"].duplicated().any():
             raise ValueError(f"Códigos INE nulos o duplicados en {nombre}")
 
+    columnas_vehiculos = ["codigo_ine", "vehiculos", "vehiculos_cero_eco"]
+    if "riesgo_flota" in v:
+        columnas_vehiculos.append("riesgo_flota")
+
     datos = m.merge(
-        v[["codigo_ine", "vehiculos", "vehiculos_cero_eco"]],
-        on="codigo_ine",
-        how="left",
-        validate="one_to_one",
+        v[columnas_vehiculos],
+        on="codigo_ine", how="left", validate="one_to_one",
     )
 
     return datos.merge(
         p[["codigo_ine", "puntos_rapidos"]],
-        on="codigo_ine",
-        how="left",
-        validate="one_to_one",
+        on="codigo_ine", how="left", validate="one_to_one",
     )
 
 
-def generar_gold(carpeta, salida=None, pesos=None):
+def generar_gold(carpeta, salida=None, pesos=None, normalizacion="p5_p95"):
     if pesos is None:
         raise ValueError("Debes proporcionar los pesos para generar la tabla Gold.")
 
     d = cargar_datos(carpeta)
-
     pob = d["poblacion"].replace(0, np.nan)
     veh = d["vehiculos"].replace(0, np.nan)
     pob_anterior = d["poblacion_5y"].replace(0, np.nan)
@@ -105,37 +100,34 @@ def generar_gold(carpeta, salida=None, pesos=None):
     d["cero_eco_por_1000"] = 1000 * d["vehiculos_cero_eco"] / pob
     d["puntos_rapidos_por_10000"] = 10000 * d["puntos_rapidos"] / veh
     d["crecimiento_poblacion"] = 100 * (pob / pob_anterior - 1)
-
     d[INDICADORES] = d[INDICADORES].replace([np.inf, -np.inf], np.nan)
 
     if d[INDICADORES].isna().any().any():
-        raise ValueError(
-            "Hay indicadores sin datos:\n"
-            + d[INDICADORES].isna().sum().to_string()
-        )
+        raise ValueError("Hay indicadores sin datos:\n" + d[INDICADORES].isna().sum().to_string())
 
-    # Normalización robusta P5-P95.
+    if normalizacion not in ("p5_p95", "minmax"):
+        raise ValueError("La normalización debe ser 'p5_p95' o 'minmax'.")
+
     for indicador in INDICADORES:
-        p5, p95 = d[indicador].quantile([0.05, 0.95])
+        if normalizacion == "p5_p95":
+            minimo, maximo = d[indicador].quantile([0.05, 0.95])
+            datos_normalizar = d[indicador].clip(minimo, maximo)
+        else:
+            minimo, maximo = d[indicador].min(), d[indicador].max()
+            datos_normalizar = d[indicador]
 
-        if p95 > p5:
-            valores = (d[indicador].clip(p5, p95) - p5) / (p95 - p5)
+        if maximo > minimo:
+            valores = (datos_normalizar - minimo) / (maximo - minimo)
         else:
             valores = pd.Series(0.0, index=d.index)
 
-        # Menos infraestructura relativa implica mayor oportunidad.
-        if indicador == "puntos_rapidos_por_10000" and p95 > p5:
+        if indicador == "puntos_rapidos_por_10000" and maximo > minimo:
             valores = 1 - valores
 
         d[indicador + "_norm"] = valores
 
     d["opportunity_score"] = calcular_score(d, pesos)
-
-    d = d.sort_values(
-        ["opportunity_score", "codigo_ine"],
-        ascending=[False, True],
-    ).reset_index(drop=True)
-
+    d = d.sort_values(["opportunity_score", "codigo_ine"], ascending=[False, True]).reset_index(drop=True)
     d["ranking_general"] = np.arange(1, len(d) + 1)
 
     if salida is not None:
@@ -155,17 +147,17 @@ def calcular_score(datos, pesos):
     )
 
 
-def seleccionar_top20(datos, criterio="opportunity_score"):
+def seleccionar_top20(datos, criterio="opportunity_score", n=20):
+    criterios = [criterio] if isinstance(criterio, str) else list(criterio)
     orden = datos.sort_values(
-        [criterio, "codigo_ine"],
-        ascending=[False, True],
+        [*criterios, "codigo_ine"],
+        ascending=[False] * len(criterios) + [True],
     ).copy()
-
     orden["numero_provincia"] = orden.groupby("provincia").cumcount() + 1
 
     return (
         orden[orden["numero_provincia"] <= 3]
-        .head(20)
+        .head(n)
         .drop(columns="numero_provincia")
         .reset_index(drop=True)
     )
@@ -177,32 +169,20 @@ def seleccionar_top20(datos, criterio="opportunity_score"):
 
 def comprobar_gold(gold):
     seccion("CALIDAD DE LA TABLA GOLD")
-
     print(f"Municipios: {len(gold)}")
     print(f"Códigos INE duplicados: {gold.codigo_ine.duplicated().sum()}")
     print("\nValores faltantes:")
     print(gold.isna().sum().to_string())
 
-    if (
-        not gold.codigo_ine.is_unique
-        or gold[INDICADORES].isna().any().any()
-        or not gold.opportunity_score.between(0, 100).all()
-    ):
+    if (not gold.codigo_ine.is_unique or gold[INDICADORES].isna().any().any()
+            or not gold.opportunity_score.between(0, 100).all()):
         raise ValueError("La tabla Gold no supera las comprobaciones")
 
     seccion("ESTADÍSTICAS DE LOS INDICADORES")
+    tabla(gold[INDICADORES].describe(percentiles=[0.05, 0.25, 0.5, 0.75, 0.95]).T.reset_index())
 
-    tabla(
-        gold[INDICADORES]
-        .describe(percentiles=[0.05, 0.25, 0.5, 0.75, 0.95])
-        .T.reset_index()
-    )
-
-    print(
-        f"\nPernoctaciones sin dato: "
-        f"{gold['pernoctaciones_2025'].isna().sum()}/{len(gold)}"
-    )
-    print("No se imputan ni se incluyen en el score.")
+    print(f"\nPernoctaciones sin dato: {gold['pernoctaciones_2025'].isna().sum()}/{len(gold)}")
+    print("No se imputan ni se incluyen en el score inicial.")
 
 
 def analizar_atipicos(gold):
@@ -211,36 +191,46 @@ def analizar_atipicos(gold):
     for indicador, etiqueta in zip(INDICADORES, ETIQUETAS):
         q1, q3 = gold[indicador].quantile([0.25, 0.75])
         iqr = q3 - q1
-        minimo = q1 - 1.5 * iqr
-        maximo = q3 + 1.5 * iqr
-
+        minimo, maximo = q1 - 1.5 * iqr, q3 + 1.5 * iqr
         n = ((gold[indicador] < minimo) | (gold[indicador] > maximo)).sum()
-
         print(f"{etiqueta}: {n} atípicos")
 
 
-def analizar_posibles_flotas(gold):
+def identificar_posibles_flotas(gold, umbrales_flotas):
+    columnas_requeridas = {
+        "vehiculos_por_habitante",
+        "cero_eco_por_1000",
+    }
+    if set(umbrales_flotas) != columnas_requeridas:
+        raise ValueError(
+            "Los umbrales deben definir vehículos por habitante y CERO/ECO por 1.000."
+        )
+
+    return (
+        gold["vehiculos_por_habitante"].gt(
+            umbrales_flotas["vehiculos_por_habitante"]
+        )
+        | gold["cero_eco_por_1000"].gt(umbrales_flotas["cero_eco_por_1000"])
+    )
+
+
+def analizar_posibles_flotas(gold, umbrales_flotas):
     seccion("POSIBLES FLOTAS: REVISIÓN PENDIENTE")
 
-    sospechosos = gold[
-        (gold["vehiculos_por_habitante"] > 2)
-        | (gold["cero_eco_por_1000"] > 200)
-    ].copy()
+    sospechosos = gold[identificar_posibles_flotas(gold, umbrales_flotas)].copy()
 
     top20 = seleccionar_top20(gold)
     puestos = dict(zip(top20.codigo_ine, range(1, 21)))
-
-    sospechosos["puesto_top20"] = (
-        sospechosos["codigo_ine"].map(puestos).fillna("-")
-    )
+    sospechosos["puesto_top20"] = sospechosos["codigo_ine"].map(puestos).fillna("-")
+    sospechosos = sospechosos.sort_values("ranking_general")
 
     print(f"Municipios detectados: {len(sospechosos)}")
+    print("Ranking general: posición entre los municipios, sin límite provincial.")
+    print("Puesto Top 20: posición con máximo 3 por provincia.")
 
     tabla(sospechosos, [
-        "municipio", "provincia",
-        "vehiculos_por_habitante",
-        "cero_eco_por_1000",
-        "puesto_top20",
+        "municipio", "provincia", "vehiculos_por_habitante",
+        "cero_eco_por_1000", "ranking_general", "puesto_top20",
     ])
 
     print("No se excluyen municipios sin validación de negocio.")
@@ -253,7 +243,6 @@ def analizar_posibles_flotas(gold):
 def comparar_con_baseline(gold):
     modelo = seleccionar_top20(gold)
     baseline = seleccionar_top20(gold, "poblacion")
-
     columnas = ["municipio", "provincia", "poblacion", "opportunity_score"]
 
     seccion("TOP 20: OPPORTUNITY SCORE")
@@ -276,74 +265,245 @@ def comparar_con_baseline(gold):
 # 4. ANÁLISIS DE SENSIBILIDAD
 # ============================================================
 
-def analizar_sensibilidad(gold, escenarios, escenario_referencia=None):
-    if not escenarios:
-        raise ValueError("Debes proporcionar al menos un escenario de pesos.")
-    if escenario_referencia is None:
-        escenario_referencia = next(iter(escenarios))
-    if escenario_referencia not in escenarios:
-        raise ValueError(
-            f"El escenario de referencia '{escenario_referencia}' no existe."
-        )
-
-    resultados = gold[["codigo_ine", "municipio", "provincia"]].copy()
-
-    for nombre, pesos in escenarios.items():
-        ranking = gold.copy()
-        ranking["score_escenario"] = calcular_score(ranking, pesos)
-
-        top20 = seleccionar_top20(ranking, "score_escenario")
-
-        resultados[nombre] = resultados.codigo_ine.isin(top20.codigo_ine)
-
-    nombres_escenarios = list(escenarios)
-    resultados["apariciones"] = resultados[nombres_escenarios].sum(axis=1)
-
-    resultados = (
-        resultados[resultados["apariciones"] > 0]
-        .sort_values(
-            ["apariciones", escenario_referencia, "municipio"],
-            ascending=[False, False, True],
-        )
-        .reset_index(drop=True)
-    )
+def analizar_sensibilidad(preparacion):
+    """Resume pesos, apariciones en los Top 20 y cambios entre escenarios."""
+    resumen = preparacion["gold"]
+    tablas = preparacion["tablas_escenarios"]
+    claves = list(tablas)
+    referencia = claves[0]
 
     seccion("ANÁLISIS DE SENSIBILIDAD")
-
-    print("Escenarios y pesos:")
-    for nombre, pesos in escenarios.items():
-        print(f"{nombre}: {[round(p * 100, 1) for p in pesos]} %")
-
-    tabla(resultados, [
-        "municipio", "provincia", "apariciones", *nombres_escenarios
-    ])
-
-    estables = (resultados["apariciones"] == len(escenarios)).sum()
-
+    print(f"Escenarios evaluados: {len(claves)}")
     print(
-        f"\nMunicipios presentes en todos los {len(escenarios)} escenarios: "
-        f"{estables}"
+        "Municipios con pernoctaciones: "
+        f"{preparacion['n_municipios_turismo']}/{len(resumen)}"
     )
-    print(f"Municipios presentes en un único escenario: "
-          f"{(resultados['apariciones'] == 1).sum()}")
+    print(f"Origen del riesgo de flota: {preparacion['origen_riesgo']}")
+    print(resumen["riesgo_flota"].value_counts().to_string())
 
-    return resultados
+    print("\nPesos efectivos (vehículos, CERO/ECO, recarga, crecimiento, turismo):")
+    for clave, pesos in preparacion["pesos_escenarios"].items():
+        print(f"{clave}: {[round(p * 100, 1) for p in pesos]} %")
+
+    seleccionados = resumen[resumen["apariciones"] > 0].sort_values(
+        ["aparicion_escenarios", "score_medio_total", "codigo_ine"],
+        ascending=[False, False, True],
+    )
+    tabla(seleccionados, [
+        "municipio", "provincia", "riesgo_flota", "apariciones",
+        "aparicion_escenarios", "score_medio_total",
+    ])
+    print(f"\nPresentes en los {len(claves)} escenarios: "
+          f"{(resumen['apariciones'] == len(claves)).sum()}")
+    print(f"Presentes en un único escenario: {(resumen['apariciones'] == 1).sum()}")
+
+    seccion(f"CAMBIOS RESPECTO A {referencia}")
+    en_top = lambda t: set(t.loc[t["ranking_20"].notna(), "codigo_ine"])
+    codigos_referencia = en_top(tablas[referencia])
+    for clave in claves[1:]:
+        codigos = en_top(tablas[clave])
+        print(f"{clave}: entran {len(codigos - codigos_referencia)}, "
+              f"salen {len(codigos_referencia - codigos)}")
+
+    seccion("MUNICIPIOS PRESENTES EN TODOS LOS ESCENARIOS")
+    tabla(
+        resumen[resumen["apariciones"] == len(claves)],
+        ["municipio", "provincia", *INDICADORES, "score_medio"],
+    )
+    print("\nIndicadores originales sin normalizar.")
+    return preparacion
 
 
 # ============================================================
-# 5. K-MEANS
+# 5. TURISMO Y ESCENARIOS
+# ============================================================
+
+def normalizar_pernoctaciones(gold, normalizacion="p5_p95"):
+    """Normaliza el turismo solo entre los municipios con dato disponible."""
+    if normalizacion not in ("p5_p95", "minmax"):
+        raise ValueError("La normalización debe ser 'p5_p95' o 'minmax'.")
+
+    valores = pd.to_numeric(gold["pernoctaciones_2025"], errors="coerce")
+    validos = valores.dropna()
+    if validos.empty:
+        return pd.Series(np.nan, index=gold.index)
+
+    if normalizacion == "p5_p95":
+        minimo, maximo = validos.quantile([0.05, 0.95])
+        valores_normalizar = valores.clip(minimo, maximo)
+    else:
+        minimo, maximo = validos.min(), validos.max()
+        valores_normalizar = valores
+
+    if maximo == minimo:
+        return pd.Series(0.0, index=gold.index).where(valores.notna())
+
+    return ((valores_normalizar - minimo) / (maximo - minimo)).clip(0, 1)
+
+
+def clasificar_riesgo_flota(gold, umbrales_flotas):
+    """Usa riesgo_flota de vehiculos.parquet; si aún no existe, umbrales provisionales."""
+    if "riesgo_flota" in gold and gold["riesgo_flota"].notna().any():
+        riesgo = (
+            gold["riesgo_flota"].astype("string").str.strip().str.lower()
+            .fillna("normal")
+        )
+        return riesgo, "vehiculos.parquet"
+
+    sospechoso = identificar_posibles_flotas(gold, umbrales_flotas)
+    riesgo = pd.Series(
+        np.where(sospechoso, "posible riesgo", "normal"), index=gold.index
+    )
+    return riesgo, "umbrales provisionales (sin columna riesgo_flota)"
+
+
+def _contar_apariciones(rankings, codigos, mascara=None):
+    """Cuenta en cuántos Top 20 de escenario aparece cada municipio."""
+    apariciones = pd.Series(0, index=codigos.index, dtype="int64")
+    for ranking in rankings.values():
+        candidatos = ranking if mascara is None else ranking[
+            ranking["codigo_ine"].map(mascara)
+        ]
+        top20 = seleccionar_top20(candidatos, "score")
+        apariciones += codigos.isin(top20["codigo_ine"]).astype("int64")
+    return apariciones
+
+
+def preparar_escenarios(
+    gold,
+    escenarios,
+    normalizacion,
+    umbrales_flotas,
+    valores_riesgo_excluidos,
+):
+    """Genera los rankings por escenario (con y sin turismo) y los Top 20 agregados.
+
+    escenarios: {nombre: {"pesos": [4 pesos], "peso_turismo": float}}.
+    El turismo solo se aplica a municipios con pernoctaciones; sin dato se
+    conserva el score de cuatro indicadores, sin imputar ni penalizar.
+    """
+    if not escenarios:
+        raise ValueError("Debes proporcionar escenarios de pesos.")
+
+    turismo_norm = normalizar_pernoctaciones(gold, normalizacion)
+    tiene_turismo = turismo_norm.notna()
+    riesgo, origen_riesgo = clasificar_riesgo_flota(gold, umbrales_flotas)
+
+    base = gold.copy()
+    base["riesgo_flota"] = riesgo
+    columnas_tabla = [
+        "codigo_ine", "municipio", "provincia", "poblacion",
+        "pernoctaciones_2025", *INDICADORES, "riesgo_flota",
+    ]
+
+    tablas_escenarios = {}
+    pesos_escenarios = {}
+
+    for nombre, config in escenarios.items():
+        pesos, peso_turismo = config["pesos"], config["peso_turismo"]
+        if not 0 <= peso_turismo < 1:
+            raise ValueError(f"Peso de turismo no válido en '{nombre}'.")
+
+        score_base = calcular_score(base, pesos)
+        score_turismo = score_base.copy()
+        score_turismo[tiene_turismo] = (
+            (1 - peso_turismo) * score_base[tiene_turismo]
+            + 100 * peso_turismo * turismo_norm[tiene_turismo]
+        )
+
+        variantes = {
+            nombre: (score_base, [*pesos, 0.0]),
+            f"{nombre}_turismo": (
+                score_turismo,
+                [p * (1 - peso_turismo) for p in pesos] + [peso_turismo],
+            ),
+        }
+        for clave, (score, pesos_efectivos) in variantes.items():
+            ranking = base[columnas_tabla].assign(score=score).sort_values(
+                ["score", "codigo_ine"], ascending=[False, True]
+            ).reset_index(drop=True)
+            ranking["ranking_general"] = np.arange(1, len(ranking) + 1)
+
+            top20 = seleccionar_top20(ranking, "score")
+            puestos = dict(zip(top20["codigo_ine"], range(1, len(top20) + 1)))
+            ranking["ranking_20"] = ranking["codigo_ine"].map(puestos).astype("Int64")
+
+            tablas_escenarios[clave] = ranking
+            pesos_escenarios[clave] = pesos_efectivos
+
+    resumen = base.copy()
+    for clave, ranking in tablas_escenarios.items():
+        indice = ranking.set_index("codigo_ine")
+        resumen[f"score_{clave}"] = resumen["codigo_ine"].map(indice["score"])
+        resumen[f"ranking_20_{clave}"] = resumen["codigo_ine"].map(
+            indice["ranking_20"]
+        ).astype("Int64")
+
+    n = len(tablas_escenarios)
+    claves_sin = [c for c in tablas_escenarios if not c.endswith("_turismo")]
+    claves_con = [c for c in tablas_escenarios if c.endswith("_turismo")]
+    resumen["score_medio"] = resumen[[f"score_{c}" for c in claves_sin]].mean(axis=1)
+    resumen["score_medio_turismo"] = resumen[
+        [f"score_{c}" for c in claves_con]
+    ].mean(axis=1)
+    resumen["score_medio_total"] = resumen[
+        [f"score_{c}" for c in tablas_escenarios]
+    ].mean(axis=1)
+
+    resumen["apariciones"] = _contar_apariciones(tablas_escenarios, resumen["codigo_ine"])
+    resumen["aparicion_escenarios"] = resumen["apariciones"] / n
+
+    # En "confianza" los municipios con riesgo se eliminan antes de calcular cada Top 20.
+    confiable = ~resumen["riesgo_flota"].isin(valores_riesgo_excluidos)
+    mascara_confianza = dict(zip(resumen["codigo_ine"], confiable))
+    resumen["apariciones_confianza"] = _contar_apariciones(
+        tablas_escenarios, resumen["codigo_ine"], mascara_confianza
+    )
+    resumen["aparicion_confianza"] = resumen["apariciones_confianza"] / n
+
+    columnas_top = [
+        "codigo_ine", "municipio", "provincia", "poblacion",
+        "pernoctaciones_2025", *INDICADORES, "riesgo_flota",
+        "apariciones", "puntuacion_aparicion", "score_medio_total",
+        "score_medio", "score_medio_turismo",
+    ]
+    definiciones = {
+        "top_20": (resumen, "apariciones"),
+        "top_20_turismo": (resumen, "apariciones"),
+        "top_20_confianza": (resumen[confiable], "apariciones_confianza"),
+        "top_20_confianza_turismo": (resumen[confiable], "apariciones_confianza"),
+    }
+    tablas_top = {}
+    for nombre, (datos, apariciones) in definiciones.items():
+        top = seleccionar_top20(datos, [apariciones, "score_medio_total"]).copy()
+        top["apariciones"] = top[apariciones]
+        top["puntuacion_aparicion"] = top[apariciones] / n
+        top = top[columnas_top]
+        top.insert(0, "ranking_20", np.arange(1, len(top) + 1))
+        tablas_top[nombre] = top
+
+    return {
+        "gold": resumen,
+        "tablas_escenarios": tablas_escenarios,
+        "tablas_top": tablas_top,
+        "pesos_escenarios": pesos_escenarios,
+        "n_municipios_turismo": int(tiene_turismo.sum()),
+        "origen_riesgo": origen_riesgo,
+    }
+
+
+# ============================================================
+# 6. K-MEANS
 # ============================================================
 
 def analizar_kmeans(gold):
     columnas = [c + "_norm" for c in INDICADORES]
     x = gold[columnas].to_numpy()
-
     metricas = []
 
     for k in range(2, 9):
         modelo = KMeans(n_clusters=k, random_state=42, n_init=10)
         grupos = modelo.fit_predict(x)
-
         metricas.append({
             "k": k,
             "inercia": modelo.inertia_,
@@ -355,8 +515,7 @@ def analizar_kmeans(gold):
 
     resultado = gold.copy()
     resultado["cluster"] = (
-        KMeans(n_clusters=k, random_state=42, n_init=10)
-        .fit_predict(x) + 1
+        KMeans(n_clusters=k, random_state=42, n_init=10).fit_predict(x) + 1
     )
 
     seccion("K-MEANS: ELECCIÓN DE K")
@@ -383,7 +542,7 @@ def analizar_kmeans(gold):
 
 
 # ============================================================
-# 6. VISOR DE GRÁFICOS
+# 7. VISOR DE GRÁFICOS
 # ============================================================
 
 def visor(titulo, paginas, ancho=12, alto=7):
@@ -408,10 +567,9 @@ def visor(titulo, paginas, ancho=12, alto=7):
 
         fig.text(
             0.5, 0.105,
-            f"{titulo}  |  {estado['pagina'] + 1}/{len(paginas)}",
+            f"{titulo} | {estado['pagina'] + 1}/{len(paginas)}",
             ha="center",
         )
-
         fig.canvas.draw_idle()
 
     def mover(paso):
@@ -435,7 +593,7 @@ def visor(titulo, paginas, ancho=12, alto=7):
 
 
 # ============================================================
-# 7. GRÁFICOS DE INDICADORES
+# 8. GRÁFICOS DE INDICADORES
 # ============================================================
 
 def graficos_indicadores(gold):
@@ -447,14 +605,10 @@ def graficos_indicadores(gold):
             valores = gold[col].dropna()
             p5, mediana, p95 = valores.quantile([0.05, 0.5, 0.95])
 
-            # Histograma y boxplot juntos.
             ax1 = fig.add_axes([0.10, 0.27, 0.48, 0.55])
             ax2 = fig.add_axes([0.67, 0.27, 0.25, 0.55])
 
-            ax1.hist(
-                valores, bins=25,
-                color="#5b9c98", edgecolor="white",
-            )
+            ax1.hist(valores, bins=25, color="#5b9c98", edgecolor="white")
 
             for valor, texto, color in [
                 (p5, "P5", "#bd7d22"),
@@ -473,18 +627,15 @@ def graficos_indicadores(gold):
             ax1.grid(alpha=0.2)
 
             ax2.boxplot(
-                valores,
-                patch_artist=True,
+                valores, patch_artist=True,
                 boxprops={"facecolor": "#a6d4cd"},
                 medianprops={"color": "black", "linewidth": 2},
             )
-
             ax2.set_title("Boxplot")
             ax2.set_ylabel(nombre)
             ax2.grid(alpha=0.2)
 
             fig.suptitle(nombre, fontsize=15, y=0.93)
-
             fig.text(
                 0.5, 0.17,
                 "Histograma y boxplot: todos los valores. El score limita extremos a P5-P95.",
@@ -505,23 +656,18 @@ def graficos_indicadores(gold):
 
         for i in range(4):
             for j in range(4):
-                ax.text(
-                    j, i, f"{matriz.iloc[i, j]:.2f}",
-                    ha="center", va="center",
-                )
+                ax.text(j, i, f"{matriz.iloc[i, j]:.2f}", ha="center", va="center")
 
         fig.colorbar(imagen, ax=ax)
         ax.set_title("Correlación de Pearson")
 
     paginas.append(correlacion)
-
     return visor("Indicadores", paginas)
 
 
 # ============================================================
-# 8. GRÁFICOS DE RANKING
+# 9. GRÁFICOS DE RANKING
 # ============================================================
-
 
 def grafico_comparacion(modelo, baseline):
     paginas = []
@@ -533,7 +679,6 @@ def grafico_comparacion(modelo, baseline):
 
         def pagina(fig, df=datos, nombre=titulo, columna=criterio, tono=color):
             ax = fig.add_axes([0.38, 0.16, 0.55, 0.73])
-
             orden = df.sort_values(columna, ascending=True)
 
             etiquetas = [
@@ -545,25 +690,18 @@ def grafico_comparacion(modelo, baseline):
 
             for barra, (_, fila) in zip(barras, orden.iterrows()):
                 valor = fila[columna]
-
                 texto = (
                     f"{valor:,.0f} hab. | Score: {fila.opportunity_score:.1f}"
-                    if columna == "poblacion"
-                    else f"{valor:.1f}"
+                    if columna == "poblacion" else f"{valor:.1f}"
                 )
-
                 ax.text(
-                    valor,
-                    barra.get_y() + barra.get_height() / 2,
-                    f"  {texto}",
-                    va="center",
-                    fontsize=8,
+                    valor, barra.get_y() + barra.get_height() / 2,
+                    f"  {texto}", va="center", fontsize=8,
                 )
 
             ax.set_xlim(0, orden[columna].max() * 1.48)
             ax.set_xlabel(
-                "Población (habitantes)"
-                if columna == "poblacion"
+                "Población (habitantes)" if columna == "poblacion"
                 else "Opportunity Score (0-100)"
             )
             ax.set_title(nombre)
@@ -577,7 +715,7 @@ def grafico_comparacion(modelo, baseline):
 
 
 # ============================================================
-# 9. GRÁFICOS DE K-MEANS
+# 10. GRÁFICOS DE K-MEANS
 # ============================================================
 
 def graficos_kmeans(resultado, metricas):
@@ -587,10 +725,8 @@ def graficos_kmeans(resultado, metricas):
 
     def codo(fig):
         ax = fig.add_axes([0.15, 0.25, 0.72, 0.58])
-
         ax.plot(metricas.k, metricas.inercia, marker="o")
         ax.axvline(k, color="tomato", linestyle="--", label=f"K = {k}")
-
         ax.set_xticks(metricas.k)
         ax.set_xlabel("Número de clústeres")
         ax.set_ylabel("Inercia")
@@ -602,10 +738,8 @@ def graficos_kmeans(resultado, metricas):
 
     def silueta(fig):
         ax = fig.add_axes([0.15, 0.25, 0.72, 0.58])
-
         ax.plot(metricas.k, metricas.silueta, marker="o")
         ax.axvline(k, color="tomato", linestyle="--", label=f"K = {k}")
-
         ax.set_xticks(metricas.k)
         ax.set_xlabel("Número de clústeres")
         ax.set_ylabel("Coeficiente de silueta")
@@ -620,16 +754,12 @@ def graficos_kmeans(resultado, metricas):
         medias = resultado.groupby("cluster")[columnas].mean()
 
         for grupo, fila in medias.iterrows():
-            ax.plot(
-                range(4), fila.to_numpy(),
-                marker="o", label=f"Grupo {grupo}",
-            )
+            ax.plot(range(4), fila.to_numpy(), marker="o", label=f"Grupo {grupo}")
 
         ax.set_xticks(
             range(4),
             ["Veh/hab.", "CERO/ECO", "Escasez recarga", "Crecimiento"],
         )
-
         ax.set_ylim(0, 1.05)
         ax.set_ylabel("Media normalizada")
         ax.set_title("Perfiles de los clústeres")
@@ -648,30 +778,20 @@ def graficos_kmeans(resultado, metricas):
         x = resultado[columnas].to_numpy()
         modelo = PCA(n_components=2)
         puntos = modelo.fit_transform(x)
-
         ax = fig.add_axes([0.13, 0.23, 0.73, 0.62])
 
         for grupo in sorted(resultado.cluster.unique()):
             mascara = resultado.cluster.eq(grupo).to_numpy()
-
             ax.scatter(
-                puntos[mascara, 0],
-                puntos[mascara, 1],
-                s=22, alpha=0.65,
-                label=f"Grupo {grupo}",
+                puntos[mascara, 0], puntos[mascara, 1],
+                s=22, alpha=0.65, label=f"Grupo {grupo}",
             )
 
-        ax.set_xlabel(
-            f"Componente 1 ({modelo.explained_variance_ratio_[0]:.1%})"
-        )
-        ax.set_ylabel(
-            f"Componente 2 ({modelo.explained_variance_ratio_[1]:.1%})"
-        )
-
+        ax.set_xlabel(f"Componente 1 ({modelo.explained_variance_ratio_[0]:.1%})")
+        ax.set_ylabel(f"Componente 2 ({modelo.explained_variance_ratio_[1]:.1%})")
         ax.set_title("Representación PCA")
         ax.legend()
         ax.grid(alpha=0.2)
 
     paginas.append(pca)
-
     return visor("K-Means", paginas)
