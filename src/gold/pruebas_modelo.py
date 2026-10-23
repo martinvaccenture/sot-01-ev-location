@@ -3,7 +3,6 @@
 from pathlib import Path
 
 import matplotlib.pyplot as plt
-import pandas as pd
 
 from gold import (
     analizar_atipicos,
@@ -23,65 +22,57 @@ from gold import (
 RAIZ = Path(__file__).resolve().parents[2]
 CARPETA_DATOS = RAIZ / "data"
 RUTA_GOLD = CARPETA_DATOS / "gold.parquet"
-RUTA_TURISMO = CARPETA_DATOS / "ranking_turismo.parquet"
 CARPETA_RESULTADOS = RAIZ / "resultados"
 
 NORMALIZACION = "p5_p95"
 PESOS_MODELO = [1 / 6, 1 / 3, 1 / 3, 1 / 6]
-ESCENARIOS_SENSIBILIDAD = {
-    "Actual": PESOS_MODELO,
-    "Equilibrado": [0.25, 0.25, 0.25, 0.25],
-    "Electrificación": [0.15, 0.50, 0.20, 0.15],
-    "Infraestructura": [0.15, 0.20, 0.50, 0.15],
-    "Crecimiento": [0.15, 0.20, 0.20, 0.45],
+
+# Orden de pesos: vehículos/hab., CERO/ECO, escasez de recarga rápida, crecimiento.
+# peso_turismo solo se aplica a municipios con pernoctaciones (118 de 783),
+# por eso se mantiene pequeño y se ajusta a la lógica de cada escenario.
+ESCENARIOS = {
+    # Referencia: los visitantes añaden demanda de recarga, pero no es el foco.
+    "modelo_base": {"pesos": PESOS_MODELO, "peso_turismo": 0.10},
+    # El parque CERO/ECO es residente; el visitante no aparece en ese indicador.
+    "electrificacion": {"pesos": [0.15, 0.50, 0.20, 0.15], "peso_turismo": 0.08},
+    # El visitante carga en ruta y sin cargador doméstico: depende de la red rápida.
+    "infraestructura": {"pesos": [0.15, 0.20, 0.50, 0.15], "peso_turismo": 0.12},
+    # Se busca demanda residente estable; la turística es estacional.
+    "crecimiento": {"pesos": [0.15, 0.20, 0.20, 0.45], "peso_turismo": 0.06},
 }
 
-# Valor prudente porque actualmente solo una parte de los municipios tiene
-# pernoctaciones observadas. Se puede sustituir al llamar a main().
-PESO_TURISMO = 0.10
+# Valores de riesgo_flota (vehiculos.parquet) que se eliminan en las tablas de confianza.
+VALORES_RIESGO_EXCLUIDOS = ("riesgo alto", "posible riesgo")
 
-# Umbrales de alerta revisables; no confirman que exista una flota empresarial.
+# Solo se usan mientras vehiculos.parquet no tenga la columna riesgo_flota.
 UMBRALES_RIESGO_FLOTA = {
     "vehiculos_por_habitante": 2.0,
     "cero_eco_por_1000": 200.0,
-}
-
-RUTAS_TABLAS_FINALES = {
-    "sin_turismo": CARPETA_RESULTADOS / "top20_sin_turismo.parquet",
-    "con_turismo": CARPETA_RESULTADOS / "top20_con_turismo.parquet",
-    "sin_turismo_sin_flotas": (
-        CARPETA_RESULTADOS / "top20_sin_turismo_sin_flotas.parquet"
-    ),
-    "con_turismo_sin_flotas": (
-        CARPETA_RESULTADOS / "top20_con_turismo_sin_flotas.parquet"
-    ),
 }
 
 
 def main(
     pesos=None,
     escenarios=None,
-    peso_turismo=PESO_TURISMO,
     umbrales_flotas=None,
+    valores_riesgo_excluidos=VALORES_RIESGO_EXCLUIDOS,
     normalizacion=NORMALIZACION,
 ):
     """Ejecuta el análisis y deja configurables pesos, escenarios y filtros."""
     pesos = PESOS_MODELO if pesos is None else pesos
-    escenarios = (
-        ESCENARIOS_SENSIBILIDAD.copy()
-        if escenarios is None else dict(escenarios)
-    )
-    escenarios["Actual"] = pesos
+    escenarios = {
+        nombre: dict(config)
+        for nombre, config in (ESCENARIOS if escenarios is None else escenarios).items()
+    }
     umbrales_flotas = (
         UMBRALES_RIESGO_FLOTA.copy()
         if umbrales_flotas is None else dict(umbrales_flotas)
     )
 
-    print("Pesos del modelo actual:")
+    print("Pesos del modelo base:")
     print([round(peso * 100, 1) for peso in pesos], "%")
     print(f"Normalización: {normalizacion}")
-    print(f"Peso de turismo con dato válido: {peso_turismo:.1%}")
-    print(f"Escenarios base: {len(escenarios)}; con turismo: {len(escenarios)}")
+    print(f"Escenarios: {len(escenarios)} sin turismo y {len(escenarios)} con turismo")
 
     gold = generar_gold(
         CARPETA_DATOS,
@@ -102,42 +93,25 @@ def main(
     preparacion = preparar_escenarios(
         gold,
         escenarios,
-        peso_turismo,
         normalizacion,
         umbrales_flotas,
-        escenario_referencia="Actual",
+        valores_riesgo_excluidos,
     )
     analizar_sensibilidad(preparacion)
 
     CARPETA_RESULTADOS.mkdir(parents=True, exist_ok=True)
     preparacion["gold"].to_parquet(RUTA_GOLD, index=False)
-    columnas_tabla = [
-        "posicion_top20", "municipio", "provincia", "poblacion",
-        "opportunity_score", "ranking_general", "aparicion_escenarios",
-        "posible_riesgo_flota",
-    ]
-    for nombre, tabla_final in preparacion["tablas_finales"].items():
-        print(f"\n=== TABLA FINAL: {nombre} ===")
-        print(f"Municipios: {len(tabla_final)}")
-        print(tabla_final[columnas_tabla].to_string(index=False))
-        tabla_final.to_parquet(RUTAS_TABLAS_FINALES[nombre], index=False)
 
-    ranking_turismo = pd.concat(
-        [
-            preparacion["tablas_finales"]["con_turismo"].assign(
-                tabla_final="con_turismo"
-            ),
-            preparacion["tablas_finales"]["con_turismo_sin_flotas"].assign(
-                tabla_final="con_turismo_sin_flotas"
-            ),
-        ],
-        ignore_index=True,
-    )
-    ranking_turismo.to_parquet(RUTA_TURISMO, index=False)
+    tablas = {**preparacion["tablas_escenarios"], **preparacion["tablas_top"]}
+    for nombre, tabla_final in tablas.items():
+        tabla_final.to_parquet(CARPETA_RESULTADOS / f"{nombre}.parquet", index=False)
+
+    for nombre, top in preparacion["tablas_top"].items():
+        print(f"\n=== {nombre.upper()} ===")
+        print(top.to_string(index=False))
 
     print(f"\nGold global guardado en: {RUTA_GOLD}")
-    print(f"Tablas finales guardadas en: {CARPETA_RESULTADOS}")
-    print(f"Ranking de turismo guardado en: {RUTA_TURISMO}")
+    print(f"{len(tablas)} tablas guardadas en: {CARPETA_RESULTADOS}")
 
     plt.show()
     return preparacion
