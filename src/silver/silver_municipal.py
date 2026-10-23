@@ -125,6 +125,34 @@ def construir_municipios():
     _guardar_parquet(_solo_mayores_del_umbral(_municipios_completos()), "municipios.parquet")
 
 
+def _riesgo_flota(vehiculos, poblacion):
+    """Añade el riesgo de flota y sus factores, sin redondear los valores."""
+    validos = (vehiculos["parque_total"].notna() & vehiculos["parque_total"].ne(0)
+               & poblacion.notna() & poblacion.ne(0))
+    parque = vehiculos["parque_total"].where(validos)
+    poblacion = poblacion.where(validos)
+    eco_0 = vehiculos["dist_0"] + vehiculos["dist_eco"]
+    indicadores = pd.DataFrame({
+        "factor_vehiculos_por_habitante": parque / poblacion,
+        "factor_eco_0_por_parque": eco_0 / parque,
+        "factor_eco_0_por_habitante": eco_0 / poblacion * 1000,
+    })
+    q1 = indicadores.quantile(0.25)
+    q3 = indicadores.quantile(0.75)
+    iqr = q3 - q1
+    limite = q3 + 1.5 * iqr
+    supera = indicadores.gt(limite)
+    cantidad = supera.sum(axis=1)
+    vehiculos["riesgo_flota"] = "NORMAL"
+    vehiculos.loc[cantidad.eq(2), "riesgo_flota"] = "POSIBLE RIESGO"
+    vehiculos.loc[cantidad.eq(3), "riesgo_flota"] = "RIESGO ALTO"
+    for columna in indicadores:
+        vehiculos[columna] = (indicadores[columna] / limite[columna]).where(
+            supera[columna] & cantidad.ge(2)
+        )
+    return vehiculos
+
+
 def construir_vehiculos():
     """DGT -> silver/vehiculos.parquet (parque y distintivos de los municipios del filtro)."""
     dgt = pd.read_excel(_ruta("S3_RAW_PATH", "dgt", NOMBRE_DGT), dtype={"Código INE": str})
@@ -141,10 +169,16 @@ def construir_vehiculos():
     vehiculos["nombre"] = _limpiar_nombre(vehiculos["nombre"])
 
     # Los municipios del filtro se deciden con la población del Padrón
-    codigos = set(_solo_mayores_del_umbral(_municipios_completos())["cod_ine"])
+    municipios = _solo_mayores_del_umbral(_municipios_completos())
+    codigos = set(municipios["cod_ine"])
     faltan = codigos - set(vehiculos["cod_ine"])
     if faltan:
         raise ValueError(f"Municipios del filtro que no están en la DGT: {sorted(faltan)}")
     vehiculos = vehiculos[vehiculos["cod_ine"].isin(codigos)].reset_index(drop=True)
 
+    poblacion = vehiculos[["cod_ine"]].merge(
+        municipios[["cod_ine", f"pob_{ANIO}"]],
+        on="cod_ine", how="left", validate="one_to_one",
+    )[f"pob_{ANIO}"]
+    vehiculos = _riesgo_flota(vehiculos, poblacion)
     _guardar_parquet(vehiculos, "vehiculos.parquet")

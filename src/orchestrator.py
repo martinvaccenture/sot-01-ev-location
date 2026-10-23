@@ -2,11 +2,11 @@ import logging
 import sys
 from datetime import datetime
 
-from src.bronze.ingesta_puntos_recarga import descargar_dgt as descargar_dgt_puntos
-from src.bronze.ingestion_municipal import *
-from src.silver.silver_municipal import *
-from src.silver.silver_cargadores_geometria import *
-from src.gold.gold import *
+from bronze.ingesta_puntos_recarga import descargar_dgt as descargar_dgt_puntos
+from bronze.ingestion_municipal import *
+from silver.silver_municipal import *
+from silver.silver_cargadores_geometria import *
+from gold.gold import *
 from dotenv import load_dotenv
 
 
@@ -85,10 +85,10 @@ def run_pipeline():
         gdf_recarga = convertir_coordenadas_en_geometrias(df)
         gdf_municipios = preparar_municipios()
         gdf_join = realizar_spatial_join(gdf_recarga, gdf_municipios)
-        metricas = medir_cruces_fallidos(gdf_join)
+        metricas, gdf_cruces_fallidos = medir_cruces_fallidos(gdf_join)
         gdf_filtrado = filtrar_recarga_minima(gdf_join, POTENCIA_MINIMA)
         gdf_final = agregar_recarga_por_municipio(gdf_filtrado, gdf_municipios)
-        guardar_resultados(gdf_final, metricas)
+        guardar_resultados(gdf_final, gdf_cruces_fallidos)
 
         logger.info("Silver layer cargadores_geometria completed successfully.")
 
@@ -99,7 +99,7 @@ def run_pipeline():
 
         logger.info("Starting Gold layer...")
 
-        gold = generar_gold(f"{RAW_PATH}", f"{GOLD_PATH}gold.parquet", PESOS_MODELO)
+        gold = generar_gold(f"{SILVER_PATH}", f"{GOLD_PATH}gold.parquet", PESOS_MODELO)
         modelo, baseline = comparar_con_baseline(gold)
         resultados_kmeans, metricas = analizar_kmeans(gold)
 

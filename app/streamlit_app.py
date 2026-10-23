@@ -40,240 +40,660 @@ def load_data():
 
 df = load_data()
 
-# =====================================================
+# ============================================================
+
 # FILTROS
-# =====================================================
 
+# ============================================================
+ 
 st.sidebar.header("Filtros")
-
+ 
 provincias = ["Todas"] + sorted(
-    df["provincia"].dropna().unique().tolist()
-)
 
+    df["provincia"]
+
+    .dropna()
+
+    .unique()
+
+    .tolist()
+
+)
+ 
 provincia = st.sidebar.selectbox(
+
     "Provincia",
+
     provincias
-)
 
+)
+ 
+ 
+score_max = float(df["opportunity_score"].max())
+ 
 score_minimo = st.sidebar.slider(
-    "Score mínimo",
+
+    "Opportunity Score mínimo",
+
     min_value=0.0,
-    max_value=1.0,
+
+    max_value=score_max,
+
     value=0.0,
-    step=0.05
+
+    step=0.01
+
 )
+ 
+ 
+ranking_max = int(df["ranking_general"].max())
+ 
+top_n = st.sidebar.slider(
 
-clusters = ["Todos"] + sorted(
-    df["cluster"].dropna().unique().tolist()
+    "Número de municipios en el ranking",
+
+    min_value=5,
+
+    max_value=min(50, ranking_max),
+
+    value=min(10, ranking_max),
+
+    step=5
+
 )
+ 
+ 
+# ============================================================
 
-cluster = st.sidebar.selectbox(
-    "Cluster",
-    clusters
-)
-
-
-# =====================================================
 # APLICACIÓN DE FILTROS
-# =====================================================
 
+# ============================================================
+ 
 df_filtrado = df.copy()
-
+ 
 if provincia != "Todas":
+ 
     df_filtrado = df_filtrado[
+
         df_filtrado["provincia"] == provincia
-    ]
 
-if cluster != "Todos":
-    df_filtrado = df_filtrado[
-        df_filtrado["cluster"] == cluster
     ]
-
+ 
+ 
 df_filtrado = df_filtrado[
-    df_filtrado["score"] >= score_minimo
+
+    df_filtrado["opportunity_score"] >= score_minimo
+
 ]
+ 
+ 
+# ============================================================
 
+# COMPROBACIÓN
 
-# =====================================================
+# ============================================================
+ 
+if df_filtrado.empty:
+ 
+    st.warning(
+
+        "No existen municipios que cumplan los filtros seleccionados."
+
+    )
+ 
+    st.stop()
+ 
+ 
+# ============================================================
+
 # KPIs
-# =====================================================
 
+# ============================================================
+ 
 st.subheader("Indicadores principales")
-
+ 
 col1, col2, col3, col4 = st.columns(4)
-
+ 
+ 
 col1.metric(
+
     "Municipios",
-    len(df_filtrado)
-)
 
+    f"{len(df_filtrado):,}"
+
+)
+ 
+ 
 col2.metric(
-    "Vehículos eléctricos",
-    int(df_filtrado["vehiculos_electricos"].sum())
-)
 
+    "Población",
+
+    f"{int(df_filtrado['poblacion'].sum()):,}"
+
+)
+ 
+ 
 col3.metric(
-    "Puntos de recarga",
-    int(df_filtrado["puntos_recarga"].sum())
-)
 
+    "Vehículos Cero/ECO",
+
+    f"{int(df_filtrado['vehiculos_cero_eco'].sum()):,}"
+
+)
+ 
+ 
 col4.metric(
-    "Score medio",
-    round(df_filtrado["score"].mean(), 2)
+
+    "Puntos de recarga rápida",
+
+    f"{int(df_filtrado['puntos_rapidos'].sum()):,}"
+
 )
+ 
+ 
+# ============================================================
 
-
-# =====================================================
-# MAPA
-# =====================================================
-
-st.subheader("Mapa de oportunidades")
-
-fig_mapa = px.scatter_map(
-    df_filtrado,
-    lat="latitud",
-    lon="longitud",
-    color="score",
-    size="poblacion",
-    hover_name="municipio",
-    hover_data=[
-        "provincia",
-        "score",
-        "cluster",
-        "puntos_recarga",
-        "vehiculos_electricos"
-    ],
-    color_continuous_scale="RdYlGn",
-    zoom=5,
-    height=550
-)
-
-st.plotly_chart(
-    fig_mapa,
-    width="stretch"
-)
-
-
-# =====================================================
 # RANKING
-# =====================================================
 
-st.subheader("Ranking de municipios")
-
+# ============================================================
+ 
+st.divider()
+ 
+st.subheader("🏆 Ranking de oportunidades")
+ 
+ 
 ranking = (
+
     df_filtrado
+
     .sort_values(
-        by="score",
-        ascending=False
+
+        by="ranking_general",
+
+        ascending=True
+
     )
-    .head(10)
+
+    .head(top_n)
+
 )
+ 
+ 
+ranking_mostrar = ranking[
 
-st.dataframe(
-    ranking[
-        [
-            "municipio",
-            "provincia",
-            "poblacion",
-            "vehiculos_electricos",
-            "puntos_recarga",
-            "score",
-            "cluster"
-        ]
-    ],
-    width="stretch",
-    hide_index=True
-)
+    [
 
+        "ranking_general",
 
-# =====================================================
-# DETALLE DE MUNICIPIO
-# =====================================================
+        "municipio",
 
-st.subheader("Detalle del municipio")
+        "provincia",
 
-municipios = sorted(
-    df_filtrado["municipio"].unique()
-)
+        "poblacion",
 
-if municipios:
+        "vehiculos_cero_eco",
 
-    municipio_seleccionado = st.selectbox(
-        "Selecciona un municipio",
-        municipios
-    )
+        "puntos_rapidos",
 
-    municipio = df_filtrado[
-        df_filtrado["municipio"]
-        == municipio_seleccionado
-    ].iloc[0]
+        "opportunity_score"
 
-    col1, col2, col3, col4 = st.columns(4)
+    ]
 
-    col1.metric(
-        "Score",
-        round(municipio["score"], 2)
-    )
+].copy()
+ 
+ 
+ranking_mostrar.columns = [
 
-    col2.metric(
-        "Población",
-        int(municipio["poblacion"])
-    )
+    "Ranking",
 
-    col3.metric(
-        "Vehículos eléctricos",
-        int(municipio["vehiculos_electricos"])
-    )
+    "Municipio",
 
-    col4.metric(
-        "Puntos de recarga",
-        int(municipio["puntos_recarga"])
-    )
+    "Provincia",
 
-    st.write(
-        f"**Cluster:** {municipio['cluster']}"
-    )
+    "Población",
 
+    "Vehículos Cero/ECO",
 
-# =====================================================
-# CLUSTERS
-# =====================================================
+    "Puntos rápidos",
 
-st.subheader("Segmentación de municipios")
+    "Opportunity Score"
 
-cluster_counts = (
-    df_filtrado["cluster"]
-    .value_counts()
-    .reset_index()
-)
-
-cluster_counts.columns = [
-    "cluster",
-    "municipios"
 ]
+ 
+ 
+st.dataframe(
 
-fig_clusters = px.bar(
-    cluster_counts,
-    x="cluster",
-    y="municipios",
-    color="cluster",
-    title="Número de municipios por cluster"
-)
+    ranking_mostrar,
 
-st.plotly_chart(
-    fig_clusters,
+    hide_index=True,
+
     width="stretch"
+
 )
+ 
+ 
+# ============================================================
 
+# GRÁFICO DEL TOP
 
-# =====================================================
-# DATOS
-# =====================================================
+# ============================================================
+ 
+fig_ranking = px.bar(
 
-with st.expander("Ver dataset filtrado"):
+    ranking.sort_values(
 
+        "opportunity_score",
+
+        ascending=True
+
+    ),
+
+    x="opportunity_score",
+
+    y="municipio",
+
+    orientation="h",
+
+    color="opportunity_score",
+
+    color_continuous_scale="RdYlGn",
+
+    labels={
+
+        "opportunity_score": "Opportunity Score",
+
+        "municipio": "Municipio"
+
+    },
+
+    title=f"Top {len(ranking)} municipios por Opportunity Score"
+
+)
+ 
+ 
+fig_ranking.update_layout(
+
+    coloraxis_showscale=False,
+
+    yaxis_title=None,
+
+    xaxis_title="Opportunity Score"
+
+)
+ 
+ 
+st.plotly_chart(
+
+    fig_ranking,
+
+    width="stretch"
+
+)
+ 
+ 
+# ============================================================
+
+# DETALLE MUNICIPIO
+
+# ============================================================
+ 
+st.divider()
+ 
+st.subheader("🔎 Detalle del municipio")
+ 
+ 
+municipios = (
+
+    df_filtrado
+
+    .sort_values("ranking_general")["municipio"]
+
+    .dropna()
+
+    .unique()
+
+    .tolist()
+
+)
+ 
+ 
+municipio_seleccionado = st.selectbox(
+
+    "Selecciona un municipio",
+
+    municipios
+
+)
+ 
+ 
+municipio = df_filtrado[
+
+    df_filtrado["municipio"] == municipio_seleccionado
+
+].sort_values(
+
+    "ranking_general"
+
+).iloc[0]
+ 
+ 
+# ============================================================
+
+# KPIs MUNICIPIO
+
+# ============================================================
+ 
+col1, col2, col3, col4 = st.columns(4)
+ 
+ 
+col1.metric(
+
+    "Ranking general",
+
+    f"#{int(municipio['ranking_general'])}"
+
+)
+ 
+ 
+col2.metric(
+
+    "Opportunity Score",
+
+    f"{municipio['opportunity_score']:.3f}"
+
+)
+ 
+ 
+col3.metric(
+
+    "Población",
+
+    f"{int(municipio['poblacion']):,}"
+
+)
+ 
+ 
+col4.metric(
+
+    "Puntos rápidos",
+
+    f"{int(municipio['puntos_rapidos']):,}"
+
+)
+ 
+ 
+# ============================================================
+
+# SEGUNDA FILA MUNICIPIO
+
+# ============================================================
+ 
+col1, col2, col3, col4 = st.columns(4)
+ 
+ 
+col1.metric(
+
+    "Vehículos",
+
+    f"{int(municipio['vehiculos']):,}"
+
+)
+ 
+ 
+col2.metric(
+
+    "Vehículos Cero/ECO",
+
+    f"{int(municipio['vehiculos_cero_eco']):,}"
+
+)
+ 
+ 
+col3.metric(
+
+    "Cero/ECO por 1.000 hab.",
+
+    f"{municipio['cero_eco_por_1000']:.2f}"
+
+)
+ 
+ 
+col4.metric(
+
+    "Puntos rápidos por 10.000 hab.",
+
+    f"{municipio['puntos_rapidos_por_10000']:.2f}"
+
+)
+ 
+ 
+# ============================================================
+
+# VARIABLES DEL SCORE
+
+# ============================================================
+ 
+st.subheader("Factores que explican la oportunidad")
+ 
+ 
+factores = pd.DataFrame(
+
+    {
+
+        "Factor": [
+
+            "Vehículos por habitante",
+
+            "Cero/ECO por 1.000 habitantes",
+
+            "Puntos rápidos por 10.000 habitantes",
+
+            "Crecimiento de población"
+
+        ],
+
+        "Valor normalizado": [
+
+            municipio["vehiculos_por_habitante_norm"],
+
+            municipio["cero_eco_por_1000_norm"],
+
+            municipio["puntos_rapidos_por_10000_norm"],
+
+            municipio["crecimiento_poblacion_norm"]
+
+        ]
+
+    }
+
+)
+ 
+ 
+fig_factores = px.bar(
+
+    factores,
+
+    x="Valor normalizado",
+
+    y="Factor",
+
+    orientation="h",
+
+    color="Valor normalizado",
+
+    color_continuous_scale="RdYlGn",
+
+    range_x=[0, 1]
+
+)
+ 
+ 
+fig_factores.update_layout(
+
+    coloraxis_showscale=False,
+
+    xaxis_title="Valor normalizado",
+
+    yaxis_title=None
+
+)
+ 
+ 
+st.plotly_chart(
+
+    fig_factores,
+
+    width="stretch"
+
+)
+ 
+ 
+# ============================================================
+
+# INFORMACIÓN ADICIONAL
+
+# ============================================================
+ 
+st.subheader("Información adicional")
+ 
+ 
+info = pd.DataFrame(
+
+    {
+
+        "Indicador": [
+
+            "Código INE",
+
+            "Provincia",
+
+            "Población actual",
+
+            "Población hace 5 años",
+
+            "Crecimiento de población",
+
+            "Pernoctaciones 2025",
+
+            "Vehículos por habitante"
+
+        ],
+
+        "Valor": [
+
+            municipio["codigo_ine"],
+
+            municipio["provincia"],
+
+            municipio["poblacion"],
+
+            municipio["poblacion_5y"],
+
+            municipio["crecimiento_poblacion"],
+
+            municipio["pernoctaciones_2025"],
+
+            municipio["vehiculos_por_habitante"]
+
+        ]
+
+    }
+
+)
+ 
+ 
+st.dataframe(
+
+    info,
+
+    hide_index=True,
+
+    width="stretch"
+
+)
+ 
+ 
+# ============================================================
+
+# COMPARACIÓN DE SCORES
+
+# ============================================================
+ 
+st.divider()
+ 
+st.subheader("📊 Distribución del Opportunity Score")
+ 
+ 
+fig_score = px.histogram(
+
+    df_filtrado,
+
+    x="opportunity_score",
+
+    nbins=25,
+
+    labels={
+
+        "opportunity_score": "Opportunity Score"
+
+    }
+
+)
+ 
+ 
+fig_score.update_layout(
+
+    yaxis_title="Número de municipios"
+
+)
+ 
+ 
+st.plotly_chart(
+
+    fig_score,
+
+    width="stretch"
+
+)
+ 
+ 
+# ============================================================
+
+# DATASET COMPLETO
+
+# ============================================================
+ 
+with st.expander("Ver dataset Gold filtrado"):
+ 
     st.dataframe(
-        df_filtrado,
-        width="stretch",
-        hide_index=True
+
+        df_filtrado.sort_values(
+
+            "ranking_general"
+
+        ),
+
+        hide_index=True,
+
+        width="stretch"
+
     )
+ 
+ 
+# ============================================================
+
+# FOOTER
+
+# ============================================================
+ 
+st.divider()
+ 
+st.caption(
+
+    "EV Location Intelligence | "
+
+    "Priorización de municipios para infraestructura "
+
+    "de recarga rápida."
+
+)
