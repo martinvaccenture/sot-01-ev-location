@@ -1,8 +1,19 @@
 """Pruebas del modelo EV Location Intelligence y preparación de rankings."""
 
 from pathlib import Path
+import sys
 
 import matplotlib.pyplot as plt
+
+# ============================================================
+# RUTA RAÍZ DEL PROYECTO
+# ============================================================
+
+RAIZ_PROYECTO = Path(__file__).resolve().parents[1]
+
+if str(RAIZ_PROYECTO) not in sys.path:
+    sys.path.insert(0, str(RAIZ_PROYECTO))
+
 
 from config_modelo import (
     NORMALIZACION,
