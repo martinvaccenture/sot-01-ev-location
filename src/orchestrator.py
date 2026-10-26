@@ -1,4 +1,5 @@
 import logging
+import os
 import sys
 from datetime import datetime
 
@@ -7,17 +8,27 @@ from bronze.ingestion_municipal import *
 from silver.silver_municipal import *
 from silver.silver_cargadores_geometria import *
 from gold.gold import *
+from config_modelo import (
+    NORMALIZACION,
+    PESOS_MODELO,
+    ESCENARIOS,
+    VALORES_RIESGO_EXCLUIDOS,
+    UMBRALES_RIESGO_FLOTA
+)
+
 from dotenv import load_dotenv
 
 
 load_dotenv()
 
+# ============================================================
+# VARIABLES DE ENTORNO
+# ============================================================
+
 AWS_REGION = os.getenv("AWS_REGION")
 RAW_PATH = os.getenv("S3_RAW_PATH")
 SILVER_PATH = os.getenv("S3_SILVER_PATH")
 GOLD_PATH = os.getenv("S3_GOLD_PATH")
-
-PESOS_MODELO = [1 / 6, 1 / 3, 1 / 3, 1 / 6]
 
 
 POTENCIA_MINIMA = 50  # kW
@@ -33,6 +44,42 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================================
+# GUARDAR TABLAS RESULTADOS
+# ============================================================
+
+def guardar_tablas_resultados(preparacion):
+
+    for nombre, dataframe in preparacion["tablas_escenarios"].items():
+
+        ruta = f"{GOLD_PATH}{nombre}.parquet"
+
+        dataframe.to_parquet(
+            ruta,
+            index=False
+        )
+
+        logger.info(
+            "Saved scenario table: %s",
+            ruta
+        )
+
+
+    for nombre, dataframe in preparacion["tablas_top"].items():
+
+        ruta = f"{GOLD_PATH}{nombre}.parquet"
+
+        dataframe.to_parquet(
+            ruta,
+            index=False
+        )
+
+        logger.info(
+            "Saved final ranking table: %s",
+            ruta
+        )
 
 
 # ============================================================
@@ -60,7 +107,7 @@ def run_pipeline():
         logger.info("Ingestion puntos recarga completed successfully.")
 
         logger.info("Starting ingestion municipal...")
-        
+
         descargar_dgt()
         descargar_padron()
         descargar_eoh()
@@ -81,14 +128,37 @@ def run_pipeline():
 
         logger.info("Starting Silver layer cargadores_geometria...")
 
-        df = leer_puntos_recarga_xml(f"{RAW_PATH}dgt/electrolineras.xml")
+        df = leer_puntos_recarga_xml(
+            f"{RAW_PATH}dgt/electrolineras.xml"
+        )
+
         gdf_recarga = convertir_coordenadas_en_geometrias(df)
-        gdf_filtrado = filtrar_recarga_minima(gdf_recarga, POTENCIA_MINIMA)
+
+        gdf_filtrado = filtrar_recarga_minima(
+            gdf_recarga,
+            POTENCIA_MINIMA
+        )
+
         gdf_municipios = preparar_municipios()
-        gdf_join = realizar_spatial_join(gdf_filtrado, gdf_municipios)
-        metricas, gdf_cruces_fallidos = medir_cruces_fallidos(gdf_join)
-        gdf_final = agregar_recarga_por_municipio(gdf_join, gdf_municipios)
-        guardar_resultados(gdf_final, gdf_cruces_fallidos)
+
+        gdf_join = realizar_spatial_join(
+            gdf_filtrado,
+            gdf_municipios
+        )
+
+        metricas, gdf_cruces_fallidos = medir_cruces_fallidos(
+            gdf_join
+        )
+
+        gdf_final = agregar_recarga_por_municipio(
+            gdf_join,
+            gdf_municipios
+        )
+
+        guardar_resultados(
+            gdf_final,
+            gdf_cruces_fallidos
+        )
 
         logger.info("Silver layer cargadores_geometria completed successfully.")
 
@@ -99,9 +169,32 @@ def run_pipeline():
 
         logger.info("Starting Gold layer...")
 
-        gold = generar_gold(f"{SILVER_PATH}", f"{GOLD_PATH}gold.parquet", PESOS_MODELO)
-        modelo, baseline = comparar_con_baseline(gold)
-        resultados_kmeans, metricas = analizar_kmeans(gold)
+        gold = generar_gold(
+            SILVER_PATH,
+            f"{GOLD_PATH}gold.parquet",
+            PESOS_MODELO,
+            NORMALIZACION
+        )
+
+        modelo, baseline = comparar_con_baseline(
+            gold
+        )
+
+        resultados_kmeans, metricas = analizar_kmeans(
+            gold
+        )
+
+        preparacion = preparar_escenarios(
+            gold,
+            ESCENARIOS,
+            NORMALIZACION,
+            UMBRALES_RIESGO_FLOTA,
+            VALORES_RIESGO_EXCLUIDOS
+        )
+
+        guardar_tablas_resultados(
+            preparacion
+        )
 
         logger.info("Gold layer completed successfully.")
 
