@@ -79,8 +79,8 @@ def _pernoctaciones_eoh():
                .rename(columns={"Total": f"pernoctaciones_{ANIO}"}))
 
 
-def _municipios_completos():
-    """Padrón + provincia (DGT) + EOH -> todos los municipios, SIN filtrar por población."""
+def _municipios_filtrados():
+    """Padrón + provincia (DGT) + EOH -> municipios sobre el umbral de población."""
     with fsspec.open(_ruta("S3_RAW_PATH", "ine", NOMBRE_PADRON), "rb") as archivo:
         series = json.load(archivo)
 
@@ -102,15 +102,13 @@ def _municipios_completos():
 
     municipios = pd.DataFrame(filas)
     municipios["nombre"] = _limpiar_nombre(municipios["nombre"])
+    municipios = _solo_mayores_del_umbral(municipios)
 
     # Provincia: los 2 primeros dígitos del código INE, con el nombre sacado de la DGT
     municipios.insert(2, "provincia", municipios["cod_ine"].str[:2].map(_provincias_dgt()))
 
-    # Cruce por cod_ine: la EOH se añade por left join (no se pierde ningún municipio).
-    # La comprobación va ANTES del filtro: la EOH incluye puntos de menos de 10.000 habitantes.
+    # La EOH se añade por left join; solo se conservan los municipios filtrados.
     pernoctaciones = _pernoctaciones_eoh()
-    if not pernoctaciones["cod_ine"].isin(municipios["cod_ine"]).all():
-        raise ValueError("Hay puntos turísticos de la EOH que no existen en el Padrón")
     return municipios.merge(pernoctaciones, on="cod_ine", how="left", validate="one_to_one")
 
 
@@ -122,7 +120,7 @@ def _solo_mayores_del_umbral(municipios):
 
 def construir_municipios():
     """Padrón + DGT + EOH -> silver/municipios.parquet (más de 10.000 habitantes)."""
-    _guardar_parquet(_solo_mayores_del_umbral(_municipios_completos()), "municipios.parquet")
+    _guardar_parquet(_municipios_filtrados(), "municipios.parquet")
 
 
 def _riesgo_flota(vehiculos, poblacion):
@@ -169,7 +167,7 @@ def construir_vehiculos():
     vehiculos["nombre"] = _limpiar_nombre(vehiculos["nombre"])
 
     # Los municipios del filtro se deciden con la población del Padrón
-    municipios = _solo_mayores_del_umbral(_municipios_completos())
+    municipios = _municipios_filtrados()
     codigos = set(municipios["cod_ine"])
     faltan = codigos - set(vehiculos["cod_ine"])
     if faltan:
