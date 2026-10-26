@@ -423,7 +423,15 @@ def preparar_escenarios(
             ),
         }
         for clave, (score, pesos_efectivos) in variantes.items():
-            ranking = base[columnas_tabla].assign(score=score).sort_values(
+            ranking = base[columnas_tabla].copy()
+            if clave.endswith("_turismo"):
+                ranking.insert(
+                    ranking.columns.get_loc("pernoctaciones_2025") + 1,
+                    "pernoctaciones_por_habitante",
+                    ranking["pernoctaciones_2025"] / ranking["poblacion"],
+                )
+
+            ranking = ranking.assign(score=score).sort_values(
                 ["score", "codigo_ine"], ascending=[False, True]
             ).reset_index(drop=True)
             ranking["ranking_general"] = np.arange(1, len(ranking) + 1)
@@ -431,6 +439,9 @@ def preparar_escenarios(
             top20 = seleccionar_top20(ranking, "score")
             puestos = dict(zip(top20["codigo_ine"], range(1, len(top20) + 1)))
             ranking["ranking_20"] = ranking["codigo_ine"].map(puestos).astype("Int64")
+            for indicador, peso in zip(INDICADORES, pesos_efectivos):
+                ranking[f"peso_{indicador}"] = peso
+            ranking["peso_turismo"] = pesos_efectivos[4]
 
             tablas_escenarios[clave] = ranking
             pesos_escenarios[clave] = pesos_efectivos
