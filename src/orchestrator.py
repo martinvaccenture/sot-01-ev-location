@@ -83,11 +83,11 @@ def run_pipeline():
 
         df = leer_puntos_recarga_xml(f"{RAW_PATH}dgt/electrolineras.xml")
         gdf_recarga = convertir_coordenadas_en_geometrias(df)
+        gdf_filtrado = filtrar_recarga_minima(gdf_recarga, POTENCIA_MINIMA)
         gdf_municipios = preparar_municipios()
-        gdf_join = realizar_spatial_join(gdf_recarga, gdf_municipios)
+        gdf_join = realizar_spatial_join(gdf_filtrado, gdf_municipios)
         metricas, gdf_cruces_fallidos = medir_cruces_fallidos(gdf_join)
-        gdf_filtrado = filtrar_recarga_minima(gdf_join, POTENCIA_MINIMA)
-        gdf_final = agregar_recarga_por_municipio(gdf_filtrado, gdf_municipios)
+        gdf_final = agregar_recarga_por_municipio(gdf_join, gdf_municipios)
         guardar_resultados(gdf_final, gdf_cruces_fallidos)
 
         logger.info("Silver layer cargadores_geometria completed successfully.")
