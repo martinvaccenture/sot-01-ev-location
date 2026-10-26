@@ -8,6 +8,16 @@ from bronze.ingestion_municipal import *
 from silver.silver_municipal import *
 from silver.silver_cargadores_geometria import *
 from gold.gold import *
+
+# ============================================================
+# RUTA RAÍZ DEL PROYECTO
+# ============================================================
+
+RAIZ_PROYECTO = Path(__file__).resolve().parents[1]
+
+if str(RAIZ_PROYECTO) not in sys.path:
+    sys.path.insert(0, str(RAIZ_PROYECTO))
+    
 from config_modelo import (
     NORMALIZACION,
     PESOS_MODELO,
