@@ -34,7 +34,7 @@ Estas hipótesis se contrastan mediante el scoring, la comparación con el basel
 
 La integración de las fuentes se realizará utilizando identificadores territoriales comunes, principalmente el **código INE municipal**.
 
-* Los conjuntos de datos de alto valor publicados por el INE están sujetos a licencia Creative Commons Attribution 4.0 (CC BY 4.0). La información de DGT se utiliza conforme a las condiciones establecidas en su Aviso Legal, al no haberse identificado una licencia abierta específica asociada al fichero descargado.
+* *Los conjuntos de datos de alto valor publicados por el INE están sujetos a licencia Creative Commons Attribution 4.0 (CC BY 4.0). La información de DGT se utiliza conforme a las condiciones establecidas en su Aviso Legal, al no haberse identificado una licencia abierta específica asociada al fichero descargado.
 
 ---
 
@@ -234,11 +234,16 @@ sot-01-ev-location/
 │   └── orchestrator.py
 │
 ├── venv/
+├── .env*
 ├── .env.example
 ├── .gitignore
+├── config_modelo.py
 ├── README.md
 └── requirements.txt
 ```
+
+
+ * *Se crea de manera local para añadir los paths de escritura y la región de AWS para su conexión
 
 ### Instalación
 
@@ -312,3 +317,5 @@ Esto evita hardcodear las rutas S3 en los scripts y permite cambiar la configura
 ### Uso de IA generativa
 
 Durante el desarrollo se ha utilizado IA generativa como herramienta de apoyo.
+
+Se ha realizado uso sobre todo a la hora de la visualización de los datos mediante Streamlit, y como apoyo a la hora de afrontar distintos errores y consultas que han podido surgir mediante la realización del proyecto.
